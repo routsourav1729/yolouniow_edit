@@ -1,0 +1,27 @@
+==========================================
+IDD EMBEDDING EXTRACTION
+Job started at:  Wed Mar 11 21:14:32 IST 2026
+Running on node: cn43-l40.prajna.iitb.ac.in
+Job ID:          75144
+==========================================
+
+Python: /home/agipml/sourav.rout/miniconda3/envs/yolouniow/bin/python
+CUDA available: True
+
+Loading CLIP text model: openai/clip-vit-base-patch32
+  Cache dir: /home/agipml/sourav.rout/ALL_FILES/hypyolo/clip_cache
+  Device: cuda
+  Model loaded (embed_dim=512)
+  Task 1: 8 classes → ['car', 'motorcycle', 'rider', 'person', 'autorickshaw', 'bicycle', 'traffic sign', 'traffic light']
+  Saved: embeddings/uniow-s/idd_t1.npy  shape=(8, 512)
+  Task 2: 14 classes → ['car', 'motorcycle', 'rider', 'person', 'autorickshaw', 'bicycle', 'traffic sign', 'traffic light', 'bus', 'truck', 'tanker_vehicle', 'crane_truck', 'street_cart', 'excavator']
+  Saved: embeddings/uniow-s/idd_t2.npy  shape=(14, 512)
+Done!
+
+Embedding files:
+-rw-r--r-- 1 sourav.rout agipml 16512 Mar 11 21:16 embeddings/uniow-s/idd_t1.npy
+-rw-r--r-- 1 sourav.rout agipml 28800 Mar 11 21:16 embeddings/uniow-s/idd_t2.npy
+
+==========================================
+Job finished at: Wed Mar 11 21:16:32 IST 2026
+==========================================

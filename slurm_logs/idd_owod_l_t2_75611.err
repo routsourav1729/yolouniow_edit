@@ -1,0 +1,100 @@
+/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/transformers/utils/hub.py:124: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/transformers/utils/hub.py:124: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/mmengine/utils/dl_utils/setup_env.py:56: UserWarning: Setting MKL_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed.
+  warnings.warn(
+/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/mmengine/utils/dl_utils/setup_env.py:56: UserWarning: Setting MKL_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed.
+  warnings.warn(
+/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/torch/nn/modules/conv.py:456: UserWarning: Applied workaround for CuDNN issue, install nvrtc.so (Triggered internally at ../aten/src/ATen/native/cudnn/Conv_v8.cpp:80.)
+  return F.conv2d(input, weight, bias, self.stride,
+/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/torch/nn/modules/conv.py:456: UserWarning: Applied workaround for CuDNN issue, install nvrtc.so (Triggered internally at ../aten/src/ATen/native/cudnn/Conv_v8.cpp:80.)
+  return F.conv2d(input, weight, bias, self.stride,
+/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/torch/functional.py:504: UserWarning: torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument. (Triggered internally at ../aten/src/ATen/native/TensorShape.cpp:3526.)
+  return _VF.meshgrid(tensors, **kwargs)  # type: ignore[attr-defined]
+/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/torch/functional.py:504: UserWarning: torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument. (Triggered internally at ../aten/src/ATen/native/TensorShape.cpp:3526.)
+  return _VF.meshgrid(tensors, **kwargs)  # type: ignore[attr-defined]
+/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/transformers/utils/hub.py:124: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/transformers/utils/hub.py:124: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+Traceback (most recent call last):
+  File "/home/agipml/sourav.rout/ALL_FILES/hypyolo/YOLO-UniOW/./tools/test.py", line 150, in <module>
+Traceback (most recent call last):
+  File "/home/agipml/sourav.rout/ALL_FILES/hypyolo/YOLO-UniOW/./tools/test.py", line 150, in <module>
+    main()
+  File "/home/agipml/sourav.rout/ALL_FILES/hypyolo/YOLO-UniOW/./tools/test.py", line 77, in main
+    cfg = Config.fromfile(args.config)
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/mmengine/config/config.py", line 459, in fromfile
+    main()
+  File "/home/agipml/sourav.rout/ALL_FILES/hypyolo/YOLO-UniOW/./tools/test.py", line 77, in main
+    cfg = Config.fromfile(args.config)
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/mmengine/config/config.py", line 459, in fromfile
+    cfg_dict, cfg_text, env_variables = Config._file2dict(
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/mmengine/config/config.py", line 943, in _file2dict
+    cfg_dict, cfg_text, env_variables = Config._file2dict(
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/mmengine/config/config.py", line 943, in _file2dict
+    raise e
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/mmengine/config/config.py", line 885, in _file2dict
+    raise e
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/mmengine/config/config.py", line 885, in _file2dict
+    _cfg_dict, _cfg_text, _env_variables = Config._file2dict(
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/mmengine/config/config.py", line 943, in _file2dict
+    _cfg_dict, _cfg_text, _env_variables = Config._file2dict(
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/mmengine/config/config.py", line 943, in _file2dict
+    raise e
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/mmengine/config/config.py", line 885, in _file2dict
+    raise e
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/mmengine/config/config.py", line 885, in _file2dict
+    _cfg_dict, _cfg_text, _env_variables = Config._file2dict(
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/mmengine/config/config.py", line 943, in _file2dict
+    _cfg_dict, _cfg_text, _env_variables = Config._file2dict(
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/mmengine/config/config.py", line 943, in _file2dict
+    raise e
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/mmengine/config/config.py", line 872, in _file2dict
+    raise e
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/mmengine/config/config.py", line 872, in _file2dict
+    env_variables = Config._substitute_env_variables(
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/mmengine/config/config.py", line 741, in _substitute_env_variables
+    env_variables = Config._substitute_env_variables(
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/mmengine/config/config.py", line 741, in _substitute_env_variables
+    raise KeyError(f'`{var_name}` cannot be found in `os.environ`.'
+KeyError: '`FEWSHOT_DIR` cannot be found in `os.environ`. Please set `FEWSHOT_DIR` in environment or give a default value.'
+    raise KeyError(f'`{var_name}` cannot be found in `os.environ`.'
+KeyError: '`FEWSHOT_DIR` cannot be found in `os.environ`. Please set `FEWSHOT_DIR` in environment or give a default value.'
+[2026-03-13 00:06:16,844] torch.distributed.elastic.multiprocessing.api: [ERROR] failed (exitcode: 1) local_rank: 0 (pid: 457505) of binary: /home/agipml/sourav.rout/miniconda3/envs/yolouniow/bin/python3.9
+Traceback (most recent call last):
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 346, in wrapper
+    return f(*args, **kwargs)
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/torch/distributed/run.py", line 806, in main
+    run(args)
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/torch/distributed/run.py", line 797, in run
+    elastic_launch(
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/torch/distributed/launcher/api.py", line 134, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+  File "/home/agipml/sourav.rout/miniconda3/envs/yolouniow/lib/python3.9/site-packages/torch/distributed/launcher/api.py", line 264, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+./tools/test.py FAILED
+------------------------------------------------------------
+Failures:
+[1]:
+  time      : 2026-03-13_00:06:16
+  host      : cn43-l40.prajna.iitb.ac.in
+  rank      : 1 (local_rank: 1)
+  exitcode  : 1 (pid: 457506)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-03-13_00:06:16
+  host      : cn43-l40.prajna.iitb.ac.in
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 457505)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================

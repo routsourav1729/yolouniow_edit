@@ -1,0 +1,8 @@
+car
+motorcycle
+rider
+person
+autorickshaw
+bicycle
+traffic sign
+traffic light

@@ -1,0 +1,3 @@
+datasets/IDD/JPEGImages/081104.jpg
+datasets/IDD/JPEGImages/010693.jpg
+datasets/IDD/JPEGImages/029119.jpg
