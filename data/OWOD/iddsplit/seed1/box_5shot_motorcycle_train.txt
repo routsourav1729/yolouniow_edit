@@ -1,4 +1,0 @@
-data/OWOD/JPEGImages/IDD/043381.jpg
-data/OWOD/JPEGImages/IDD/045821.jpg
-data/OWOD/JPEGImages/IDD/064509.jpg
-data/OWOD/JPEGImages/IDD/036174.jpg

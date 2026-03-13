@@ -118,6 +118,29 @@ mmdet/.mim
 work_dirs
 pretrained
 
+# local data and outputs
+data/
+datasets/
+embeddings
+embeddings/
+weights/
+weight/
+checkpoints/
+ckpts/
+outputs/
+output/
+runs/
+wandb/
+slurm_logs/
+
+# model binaries
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.onnx
+*.engine
+
 # Pytorch
 *.pth
 *.py~

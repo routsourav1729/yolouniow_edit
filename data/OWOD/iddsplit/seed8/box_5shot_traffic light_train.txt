@@ -1,4 +1,0 @@
-datasets/IDD/JPEGImages/074795.jpg
-datasets/IDD/JPEGImages/031867.jpg
-datasets/IDD/JPEGImages/090800.jpg
-datasets/IDD/JPEGImages/051854.jpg
