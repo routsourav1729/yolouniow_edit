@@ -1,0 +1,202 @@
+# Dataset: IDD  Task: 1  min_size: 100
+# img_id  score  n_known  n_novel  n_other  novel_class_counts
+010139  13.80  0  6  0  tanker_vehicle:5 truck:1
+010114  13.00  2  5  0  tanker_vehicle:5
+010115  12.50  0  5  0  tanker_vehicle:5
+010140  12.20  0  5  0  excavator:1 tanker_vehicle:4
+055641  12.05  15  6  0  street_cart:6
+081773  12.05  15  6  0  street_cart:6
+012917  11.40  0  6  0  excavator:4 truck:2
+081889  11.10  4  7  0  street_cart:2 truck:5
+052415  11.05  9  6  0  street_cart:4 truck:2
+055764  11.05  5  6  0  street_cart:4 truck:2
+081897  11.05  5  6  0  street_cart:4 truck:2
+013065  10.85  3  5  0  excavator:4 truck:1
+009960  10.50  2  4  0  tanker_vehicle:4
+099782  10.35  5  7  0  truck:7
+110503  10.25  6  6  0  bus:3 crane_truck:1 truck:2
+084877  10.15  5  5  0  bus:3 crane_truck:2
+010595  10.05  9  4  0  crane_truck:3 truck:1
+077833  10.05  19  6  0  street_cart:2 truck:4
+009967  10.00  0  4  0  tanker_vehicle:4
+010125  10.00  0  4  0  tanker_vehicle:4
+081865  10.00  2  6  0  crane_truck:1 street_cart:1 truck:4
+080307  9.95  7  6  0  bus:1 excavator:1 truck:4
+080311  9.95  6  6  0  bus:2 excavator:1 truck:3
+080318  9.95  5  6  0  bus:2 excavator:1 truck:3
+080320  9.95  10  6  0  bus:2 excavator:1 truck:3
+080321  9.95  12  6  0  bus:2 excavator:1 truck:3
+052390  9.80  4  6  0  street_cart:2 truck:4
+081528  9.75  9  5  0  street_cart:4 truck:1
+080230  9.55  14  6  1  bus:5 street_cart:1
+055638  9.50  4  5  0  street_cart:4 truck:1
+081770  9.50  4  5  0  street_cart:4 truck:1
+019176  9.30  2  4  0  tanker_vehicle:3 truck:1
+055639  9.25  5  5  0  street_cart:3 truck:2
+081771  9.25  5  5  0  street_cart:3 truck:2
+110502  9.20  2  6  0  bus:3 excavator:1 truck:2
+009951  9.05  1  4  0  tanker_vehicle:3 truck:1
+110476  9.05  9  6  0  bus:3 truck:3
+010153  9.00  2  5  1  bus:1 street_cart:4
+009982  8.80  0  4  0  tanker_vehicle:3 truck:1
+010118  8.80  0  4  0  tanker_vehicle:3 truck:1
+080221  8.75  9  5  3  bus:3 street_cart:2
+073805  8.70  4  5  0  crane_truck:1 truck:4
+080312  8.65  6  5  0  bus:1 excavator:1 truck:3
+080315  8.65  5  5  0  bus:1 excavator:1 truck:3
+102553  8.60  4  4  0  crane_truck:2 truck:2
+055004  8.45  6  4  0  street_cart:4
+055476  8.45  6  4  0  street_cart:4
+081608  8.45  6  4  0  street_cart:4
+081898  8.45  7  4  0  street_cart:4
+112032  8.45  7  4  0  street_cart:4
+080219  8.25  10  5  1  bus:2 street_cart:1 truck:2
+080229  8.25  12  5  1  bus:4 street_cart:1
+114048  8.20  4  4  0  street_cart:4
+029460  8.15  6  4  0  crane_truck:1 street_cart:1 truck:2
+004363  8.10  2  4  0  bus:1 crane_truck:2 truck:1
+055389  8.00  2  5  0  street_cart:2 truck:3
+081524  8.00  2  5  0  street_cart:2 truck:3
+001057  7.95  5  4  0  bus:1 street_cart:3
+088472  7.95  5  4  0  bus:1 street_cart:3
+079322  7.80  2  4  0  crane_truck:1 excavator:1 truck:2
+079323  7.80  2  4  0  crane_truck:1 excavator:1 truck:2
+031829  7.75  6  5  1  truck:5
+054193  7.75  3  5  0  bus:1 street_cart:1 truck:3
+099753  7.75  6  5  0  bus:2 truck:3
+103809  7.75  8  5  0  bus:4 truck:1
+110427  7.75  8  5  0  bus:2 truck:3
+110460  7.75  5  5  0  bus:3 truck:2
+110469  7.75  12  5  0  bus:2 truck:3
+110472  7.75  10  5  0  bus:2 truck:3
+110473  7.75  9  5  0  bus:2 truck:3
+111266  7.75  11  5  0  bus:2 truck:3
+112206  7.75  10  5  0  bus:2 truck:3
+079250  7.70  2  4  0  street_cart:4
+078713  7.65  6  4  0  crane_truck:1 truck:3
+081881  7.65  7  4  0  crane_truck:1 truck:3
+103079  7.65  6  4  0  tanker_vehicle:1 truck:3
+103293  7.65  8  4  0  tanker_vehicle:1 truck:3
+010109  7.60  0  4  0  tanker_vehicle:2 truck:2
+010123  7.60  0  4  0  tanker_vehicle:2 truck:2
+028517  7.55  5  3  0  crane_truck:2 truck:1
+106284  7.55  10  3  0  crane_truck:2 truck:1
+115275  7.55  5  3  0  crane_truck:2 truck:1
+000090  7.50  2  5  1  bus:2 street_cart:1 truck:2
+010110  7.50  0  3  0  tanker_vehicle:3
+010126  7.50  0  3  0  tanker_vehicle:3
+010138  7.50  0  3  0  tanker_vehicle:3
+040520  7.50  2  5  0  street_cart:1 truck:4
+083930  7.50  2  5  0  street_cart:1 truck:4
+110117  7.50  2  5  1  bus:2 street_cart:1 truck:2
+026232  7.45  3  4  0  street_cart:3 truck:1
+055286  7.45  7  4  0  street_cart:2 truck:2
+055294  7.45  9  4  0  street_cart:2 truck:2
+055396  7.45  5  4  0  street_cart:2 truck:2
+076455  7.45  1  4  0  street_cart:4
+076586  7.45  1  4  0  street_cart:4
+081423  7.45  7  4  0  street_cart:2 truck:2
+081428  7.45  9  4  0  street_cart:2 truck:2
+088473  7.45  3  4  0  bus:1 street_cart:3
+092728  7.45  3  4  0  street_cart:3 truck:1
+100989  7.45  6  4  0  street_cart:2 truck:2
+112493  7.45  10  4  0  bus:1 street_cart:2 truck:1
+012629  7.35  10  4  0  excavator:1 truck:3
+111344  7.35  5  4  0  excavator:1 truck:3
+009226  7.25  5  3  0  bus:1 crane_truck:1 excavator:1
+054312  7.25  9  3  0  crane_truck:1 excavator:1 truck:1
+103157  7.25  1  5  0  bus:1 street_cart:1 truck:3
+082233  7.20  2  4  0  street_cart:3 truck:1
+049298  7.15  3  4  0  bus:3 crane_truck:1
+084879  7.15  3  4  0  bus:3 crane_truck:1
+091834  7.05  3  3  0  tanker_vehicle:2 truck:1
+099294  7.05  3  3  0  crane_truck:2 truck:1
+064722  7.00  0  4  0  excavator:2 truck:2
+098971  7.00  0  4  1  excavator:2 truck:2
+013106  7.00  4  3  0  excavator:1 tanker_vehicle:1 truck:1
+013714  6.95  6  3  1  bus:1 excavator:2
+056027  6.95  14  4  0  bus:2 street_cart:1 truck:1
+078241  6.95  5  4  0  bus:2 street_cart:1 truck:1
+080220  6.95  7  4  1  bus:2 street_cart:1 truck:1
+080245  6.95  5  4  1  bus:2 street_cart:1 truck:1
+080246  6.95  6  4  1  bus:2 street_cart:1 truck:1
+103040  6.95  3  4  0  bus:1 street_cart:2 truck:1
+111133  6.95  8  4  0  street_cart:1 truck:3
+112072  6.95  14  4  0  street_cart:1 truck:3
+112518  6.95  9  4  0  bus:3 street_cart:1
+012338  6.85  5  3  0  crane_truck:1 street_cart:1 truck:1
+013791  6.85  7  3  0  bus:1 street_cart:1 tanker_vehicle:1
+011552  6.80  2  3  0  bus:1 crane_truck:2
+103284  6.80  2  3  0  crane_truck:2 truck:1
+111145  6.80  2  3  0  crane_truck:2 truck:1
+101238  6.75  1  5  0  truck:5
+080244  6.70  4  4  1  bus:2 street_cart:1 truck:1
+110116  6.70  4  4  1  bus:2 street_cart:1 truck:1
+111134  6.70  4  4  0  street_cart:1 truck:3
+000820  6.65  5  3  0  street_cart:3
+004791  6.65  5  3  0  street_cart:3
+008305  6.65  5  3  0  street_cart:3
+011967  6.65  5  3  0  street_cart:3
+011971  6.65  10  3  0  street_cart:3
+034661  6.65  6  3  0  street_cart:3
+054998  6.65  5  3  0  street_cart:3
+055015  6.65  5  3  0  street_cart:3
+055139  6.65  7  3  0  street_cart:3
+055143  6.65  8  3  0  street_cart:3
+055642  6.65  13  3  0  street_cart:3
+074743  6.65  7  3  0  street_cart:3
+075031  6.65  6  3  0  street_cart:3
+093678  6.65  6  3  0  street_cart:3
+106502  6.65  5  3  0  street_cart:3
+112018  6.65  9  3  0  street_cart:3
+112025  6.65  5  3  0  street_cart:3
+112026  6.65  5  3  0  street_cart:3
+112031  6.65  6  3  0  street_cart:3
+112044  6.65  5  3  0  street_cart:3
+019177  6.65  1  4  1  bus:1 tanker_vehicle:1 truck:2
+091754  6.65  1  4  0  bus:1 tanker_vehicle:1 truck:2
+091755  6.65  1  4  1  bus:1 tanker_vehicle:1 truck:2
+105262  6.60  2  4  0  bus:1 excavator:1 truck:2
+106438  6.55  5  3  0  excavator:1 street_cart:1 truck:1
+110292  6.50  0  5  0  truck:5
+000922  6.45  3  4  0  street_cart:1 truck:3
+028783  6.45  6  4  0  bus:2 truck:2
+028866  6.45  8  4  0  bus:2 truck:2
+072365  6.45  3  4  0  street_cart:1 truck:3
+075913  6.45  3  3  0  excavator:2 truck:1
+080227  6.45  17  4  3  bus:4
+080235  6.45  12  4  1  bus:4
+080237  6.45  11  4  1  bus:4
+099756  6.45  5  4  0  bus:1 truck:3
+099809  6.45  9  4  0  bus:2 truck:2
+099811  6.45  14  4  0  bus:1 truck:3
+099896  6.45  6  4  0  bus:1 truck:3
+100180  6.45  12  4  0  bus:3 truck:1
+100678  6.45  5  4  0  bus:2 truck:2
+101236  6.45  7  4  0  truck:4
+109245  6.45  5  4  0  bus:3 truck:1
+110018  6.45  6  4  0  bus:1 truck:3
+110019  6.45  7  4  0  truck:4
+110037  6.45  7  4  0  bus:4
+110120  6.45  7  4  0  bus:2 truck:2
+110383  6.45  6  4  0  bus:3 truck:1
+110426  6.45  12  4  0  bus:1 truck:3
+110428  6.45  13  4  0  bus:2 truck:2
+110431  6.45  12  4  0  bus:2 truck:2
+110461  6.45  7  4  0  bus:3 truck:1
+110463  6.45  10  4  0  bus:3 truck:1
+110464  6.45  10  4  0  bus:3 truck:1
+110468  6.45  12  4  0  bus:2 truck:2
+110470  6.45  13  4  0  bus:1 truck:3
+110471  6.45  12  4  0  bus:1 truck:3
+110474  6.45  13  4  0  bus:1 truck:3
+110475  6.45  11  4  0  bus:1 truck:3
+111174  6.45  6  4  0  bus:2 truck:2
+111209  6.45  7  4  0  bus:2 truck:2
+111212  6.45  9  4  0  bus:4
+111264  6.45  7  4  0  bus:1 truck:3
+111265  6.45  9  4  0  bus:1 truck:3
+111267  6.45  10  4  0  bus:1 truck:3
+111268  6.45  11  4  0  bus:1 truck:3
+111574  6.45  7  4  0  bus:2 truck:2
+111597  6.45  8  4  0  bus:2 truck:2

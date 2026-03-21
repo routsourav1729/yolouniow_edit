@@ -1,0 +1,17 @@
+# YOLO-UniOW Visualization — IDD Task 1
+# Checkpoint : work_dirs/yolo_uniow_s_lora_bn_1e-3_20e_8gpus_owod_idd_train_task1/best_owod_Both_epoch_20.pth
+# Thresholds : known=0.05  unknown=0.15  iou_match=0.3
+# Colour key : green=known  orange=novel-matched-unknown  red=pure-unknown
+# GT dashed  : green=known-GT  orange=novel-GT
+# Total      : 10 images
+#
+080223.jpg
+080222.jpg
+080225.jpg
+080227.jpg
+080221.jpg
+080205.jpg
+080206.jpg
+080207.jpg
+080226.jpg
+080209.jpg

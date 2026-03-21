@@ -567,15 +567,27 @@ class YOLOv10Head(BaseDenseHead):
         fg_mask_pre_prior = assigned_result['fg_mask_pre_prior']
 
         if self.anchor_label:
-            anchor_iou_thresh = self.anchor_label.get('iou_threshold', 0.5)
-            anchor_score_thresh = self.anchor_label.get('score_threshold', 0.01)
-            overlaps = bbox_overlaps(flatten_pred_bboxes, gt_bboxes, mode='iou')
-            anchor_scores = flatten_cls_preds[:, :, -1].detach().sigmoid()
-            max_known_scores = flatten_cls_preds[:, :, :-2].detach().sigmoid().amax(dim=2)
-            unknown_mask = (overlaps.amax(dim=2) < anchor_iou_thresh) & (fg_mask_pre_prior == 0) & (anchor_scores > anchor_score_thresh) & (anchor_scores > max_known_scores)
-            assigned_scores[:, :, -2] = torch.where(unknown_mask,
-                                                    anchor_scores,
-                                                    assigned_scores[:, :, -2]) # unknown embedding score
+            if getattr(self, '_wapr_in_warmup', False):
+                pass  # WAPR warmup: skip gatekeeper, T_unk gets zero gradient
+            else:
+                anchor_iou_thresh = self.anchor_label.get('iou_threshold', 0.5)
+                anchor_score_thresh = self.anchor_label.get('score_threshold', 0.01)
+                overlaps = bbox_overlaps(flatten_pred_bboxes, gt_bboxes, mode='iou')
+                anchor_scores = flatten_cls_preds[:, :, -1].detach().sigmoid()
+                max_known_scores = flatten_cls_preds[:, :, :-2].detach().sigmoid().amax(dim=2)
+                unknown_mask = (overlaps.amax(dim=2) < anchor_iou_thresh) & (fg_mask_pre_prior == 0) & (anchor_scores > anchor_score_thresh) & (anchor_scores > max_known_scores)
+
+                wapr = getattr(self, 'wapr', None)
+                cached = getattr(self.head_module, '_cached_cls_logits_one2many', None)
+                if wapr is not None and cached:
+                    self._wapr_stats = wapr.redistribute(
+                        unknown_mask, anchor_scores,
+                        assigned_scores, cached,
+                        self.num_level_priors)
+                else:
+                    assigned_scores[:, :, -2] = torch.where(unknown_mask,
+                                                            anchor_scores,
+                                                            assigned_scores[:, :, -2]) # unknown embedding score
 
         assigned_scores_sum = assigned_scores.sum().clamp(min=1)
         loss_cls = self.loss_cls(flatten_cls_preds, assigned_scores).sum()
@@ -625,7 +637,7 @@ class YOLOv10Head(BaseDenseHead):
             one2many_loss_cls=loss_cls * num_imgs * world_size,
             one2many_loss_bbox=loss_bbox * num_imgs * world_size,
             one2many_loss_dfl=loss_dfl * num_imgs * world_size)
-    
+
     def one2one_loss_by_feat(
             self,
             cls_scores: Sequence[Tensor],
@@ -714,15 +726,27 @@ class YOLOv10Head(BaseDenseHead):
         fg_mask_pre_prior = assigned_result['fg_mask_pre_prior']
 
         if self.anchor_label:
-            anchor_iou_thresh = self.anchor_label.get('iou_threshold', 0.5)
-            anchor_score_thresh = self.anchor_label.get('score_threshold', 0.01)
-            overlaps = bbox_overlaps(flatten_pred_bboxes, gt_bboxes, mode='iou')
-            anchor_scores = flatten_cls_preds[:, :, -1].detach().sigmoid()
-            max_known_scores = flatten_cls_preds[:, :, :-2].detach().sigmoid().amax(dim=2)
-            unknown_mask = (overlaps.amax(dim=2) < anchor_iou_thresh) & (fg_mask_pre_prior == 0) & (anchor_scores > anchor_score_thresh) & (anchor_scores > max_known_scores)
-            assigned_scores[:, :, -2] = torch.where(unknown_mask,
-                                                    anchor_scores,
-                                                    assigned_scores[:, :, -2]) # unknown embedding score
+            if getattr(self, '_wapr_in_warmup', False):
+                pass  # WAPR warmup: skip gatekeeper, T_unk gets zero gradient
+            else:
+                anchor_iou_thresh = self.anchor_label.get('iou_threshold', 0.5)
+                anchor_score_thresh = self.anchor_label.get('score_threshold', 0.01)
+                overlaps = bbox_overlaps(flatten_pred_bboxes, gt_bboxes, mode='iou')
+                anchor_scores = flatten_cls_preds[:, :, -1].detach().sigmoid()
+                max_known_scores = flatten_cls_preds[:, :, :-2].detach().sigmoid().amax(dim=2)
+                unknown_mask = (overlaps.amax(dim=2) < anchor_iou_thresh) & (fg_mask_pre_prior == 0) & (anchor_scores > anchor_score_thresh) & (anchor_scores > max_known_scores)
+
+                wapr = getattr(self, 'wapr', None)
+                cached = getattr(self.head_module, '_cached_cls_logits_one2one', None)
+                if wapr is not None and cached:
+                    self._wapr_stats = wapr.redistribute(
+                        unknown_mask, anchor_scores,
+                        assigned_scores, cached,
+                        self.num_level_priors)
+                else:
+                    assigned_scores[:, :, -2] = torch.where(unknown_mask,
+                                                            anchor_scores,
+                                                            assigned_scores[:, :, -2]) # unknown embedding score
 
         assigned_scores_sum = assigned_scores.sum().clamp(min=1)
         loss_cls = self.loss_cls(flatten_cls_preds, assigned_scores).sum()

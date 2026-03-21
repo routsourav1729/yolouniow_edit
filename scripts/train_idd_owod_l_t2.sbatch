@@ -7,7 +7,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
-#SBATCH --gres=gpu:2
+#SBATCH --gres=gpu:1
 #SBATCH --mem=128G
 #SBATCH --time=06:00:00
 
@@ -41,10 +41,10 @@
 #   sbatch scripts/train_idd_owod_l_t2.sbatch [num_gpus]
 # ============================================================================
 
-NUM_GPUS=${1:-${SLURM_GPUS_ON_NODE:-2}}
+NUM_GPUS=${1:-${SLURM_GPUS_ON_NODE:-1}}
 
 DATASET=IDD
-CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd.py
+CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_wapr.py
 THRESHOLD=0.05
 
 # Few-shot settings (CED-FOOD / TFA style per-class filtering)
@@ -59,8 +59,8 @@ T1_WORK_DIR=work_dirs/${STEM}_idd_train_task1
 T1_BEST=$(ls -t "${T1_WORK_DIR}"/best*.pth 2>/dev/null | head -1)
 
 # T2 directories
-T2_WORK_DIR=work_dirs/${STEM}_idd_train_task2_${FEWSHOT_K}shot
-T2_EVAL_DIR=work_dirs/eval_IDD_L_test_task2_${FEWSHOT_K}shot
+T2_WORK_DIR=work_dirs/${STEM}_idd_train_task2_${FEWSHOT_K}shot_wapr
+T2_EVAL_DIR=work_dirs/eval_IDD_L_test_task2_${FEWSHOT_K}shot_wapr
 
 echo "=========================================="
 echo "YOLO-UniOW-L  IDD T2 FEW-SHOT FINETUNING"
@@ -197,6 +197,7 @@ echo "  Started at: $(date)"
 echo "=========================================="
 
 DATASET=${DATASET} TASK=2 THRESHOLD=${THRESHOLD} SAVE=True \
+    FEWSHOT_DIR=${FEWSHOT_DIR} \
     PORT=${MASTER_PORT} \
     ./tools/dist_test.sh ${CONFIG} ${T2_BEST} ${NUM_GPUS} \
     --work-dir ${T2_EVAL_DIR}

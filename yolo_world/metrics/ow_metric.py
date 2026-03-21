@@ -238,6 +238,18 @@ class OpenWorldMetric(BaseMetric):
         self._logger.info('Absolute OSE (total_num_unk_det_as_known): ' + str(total_num_unk_det_as_known))
         self._logger.info('total_num_unk ' + str(total_num_unk))
 
+        # Per-class AOSE breakdown: which known class absorbed each unknown GT
+        aose_lines = ['\n' + '=' * 60,
+                      'A-OSE per known class (unknowns misclassified as):',
+                      '=' * 60]
+        for i, cls_name in enumerate(self.known_classes):
+            n = int(unk_det_as_knowns[50][i])
+            pct = n / int(total_num_unk_det_as_known[50]) * 100 if total_num_unk_det_as_known[50] > 0 else 0
+            aose_lines.append(f'  {cls_name:30s}: {n:5d}  ({pct:5.1f}%)')
+        aose_lines.append(f"  {'TOTAL':30s}: {int(total_num_unk_det_as_known[50]):5d}")
+        aose_lines.append('=' * 60)
+        self._logger.info('\n'.join(aose_lines))
+
         # Extra logging of class-wise APs
         # self._logger.info(self._class_names)
         # self._logger.info("AP50: " + str(['%.1f' % x for x in aps[50]]))
