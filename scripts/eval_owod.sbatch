@@ -16,17 +16,21 @@
 # ============================================================================
 #
 # Usage:
-#   sbatch scripts/eval_owod.sbatch           → T2 best checkpoint (default)
-#   sbatch scripts/eval_owod.sbatch 2         → T2 best checkpoint
-#   sbatch scripts/eval_owod.sbatch 1         → T1 best checkpoint
-#   sbatch scripts/eval_owod.sbatch 2 /path/to/epoch_40.pth  → custom checkpoint
+#   sbatch scripts/eval_owod.sbatch             → T2 best checkpoint (default)
+#   sbatch scripts/eval_owod.sbatch 2           → T2 best checkpoint
+#   sbatch scripts/eval_owod.sbatch 1           → T1 best checkpoint
+#   sbatch scripts/eval_owod.sbatch 2 "" 1      → T2 + embedding diagnostic
+#   sbatch scripts/eval_owod.sbatch 2 /path.pth → custom checkpoint
+#   sbatch scripts/eval_owod.sbatch 2 /path.pth 1 → custom ckpt + diagnostic
 #
 # Output: slurm_logs/eval_idd_<jobid>.out
 #   Prints per-class AP, U-Recall, A-OSE, and A-OSE per-class breakdown.
+#   If ANALYZE=1: also generates visualizations/embed_diag_t{task}/
 # ============================================================================
 
 TASK=${1:-2}
 CUSTOM_CKPT=${2:-""}
+ANALYZE=${3:-0}        # 1 = run embedding diagnostic after eval
 
 DATASET=IDD
 THRESHOLD=0.05
@@ -74,6 +78,7 @@ echo "  Checkpoint: $CKPT"
 echo "  Eval dir:   $EVAL_DIR"
 echo "  GPUs:       $NUM_GPUS"
 echo "  Threshold:  $THRESHOLD"
+echo "  Analyze:    $ANALYZE"
 echo "=========================================="
 
 if [ -z "$CKPT" ] || [ ! -f "$CKPT" ]; then
@@ -120,6 +125,7 @@ echo "=========================================="
 
 DATASET=${DATASET} TASK=${TASK} THRESHOLD=${THRESHOLD} SAVE=True \
     FEWSHOT_DIR=${FEWSHOT_DIR} FEWSHOT_K=${FEWSHOT_K} FEWSHOT_SEED=${FEWSHOT_SEED} \
+    ANALYZE=${ANALYZE} \
     PORT=${MASTER_PORT} \
     ./tools/dist_test.sh ${CONFIG} ${CKPT} ${NUM_GPUS} \
     --work-dir ${EVAL_DIR}
@@ -134,4 +140,45 @@ else
     echo "ERROR: Eval failed (exit code $EVAL_RC)"
 fi
 echo "=========================================="
+
+# ─── Embedding diagnostic (optional) ────────────────────────────────────────
+if [ "$ANALYZE" = "1" ] && [ $EVAL_RC -eq 0 ]; then
+    DIAG_DIR=visualizations/embed_diag_t${TASK}
+    mkdir -p "${DIAG_DIR}"
+
+    echo ""
+    echo "=========================================="
+    echo "Running embedding diagnostic"
+    echo "  Started at: $(date)"
+    echo "  Output dir: ${DIAG_DIR}"
+    echo "=========================================="
+
+    # Config parser needs these env vars
+    export DATASET TASK THRESHOLD SAVE=False
+    export FEWSHOT_DIR FEWSHOT_K FEWSHOT_SEED
+
+    python tools/embedding_diagnostic.py \
+        --config ${CONFIG} \
+        --checkpoint ${CKPT} \
+        --task ${TASK} \
+        --max-images 0 \
+        --output-dir ${DIAG_DIR}
+
+    DIAG_RC=$?
+    echo ""
+    if [ $DIAG_RC -eq 0 ]; then
+        echo "Diagnostic complete at: $(date)"
+        echo "Outputs in: ${DIAG_DIR}/"
+        ls -lh ${DIAG_DIR}/*.png ${DIAG_DIR}/*.txt ${DIAG_DIR}/*.pt 2>/dev/null
+        echo ""
+        echo "=========================================="
+        echo "ANALYSIS SUMMARY"
+        echo "=========================================="
+        cat ${DIAG_DIR}/analysis.txt
+    else
+        echo "WARNING: Diagnostic failed (exit code $DIAG_RC) — eval results are still valid"
+    fi
+    echo "=========================================="
+fi
+
 exit $EVAL_RC

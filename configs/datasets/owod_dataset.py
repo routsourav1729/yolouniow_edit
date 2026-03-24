@@ -32,6 +32,7 @@ train_image_set = '{{$IMAGESET:train}}'                                         
 threshold = {{'$THRESHOLD:0.05'}}                                                 # prediction score threshold for known class (default: 0.05)
 training_strategy = {{'$TRAINING_STRATEGY:0'}}                                    # 0: OWOD, 1: ORACLE (default: 0)
 save_rets = {{'$SAVE:False'}}                                                     # save evaluation results to 'eval_output.txt' (default: False)
+analyze = {{'$ANALYZE:0'}}                                                          # run embedding diagnostic after eval (0=off, 1=on)
 
 # Few-shot settings (CED-FOOD / TFA style per-class filtering)
 fewshot_k = {{'$FEWSHOT_K:0'}}                                                    # k-shot (0 = disabled, 10 = 10-shot, etc.)
