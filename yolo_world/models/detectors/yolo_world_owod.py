@@ -64,7 +64,7 @@ class OWODDetector(YOLODetector):
         else:
             self.embeddings.requires_grad = True
 
-        if embedding_mask:
+        if embedding_mask and not self.freeze_prompt:
             if isinstance(embedding_mask, int):
                 self._grad_mask = torch.ones(num_train_classes, dtype=torch.bool)[:, None]
                 self._grad_mask[:embedding_mask] = False

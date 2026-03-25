@@ -58,9 +58,9 @@ STEM=yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod
 T1_WORK_DIR=work_dirs/${STEM}_idd_train_task1
 T1_BEST=$(ls -t "${T1_WORK_DIR}"/best*.pth 2>/dev/null | head -1)
 
-# T2 directories
-T2_WORK_DIR=work_dirs/${STEM}_idd_train_task2_${FEWSHOT_K}shot_wapr
-T2_EVAL_DIR=work_dirs/eval_IDD_L_test_task2_${FEWSHOT_K}shot_wapr
+# T2 directories (v2: fixed EMA/lr/norm — see config comments)
+T2_WORK_DIR=work_dirs/${STEM}_idd_train_task2_${FEWSHOT_K}shot_wapr_v2
+T2_EVAL_DIR=work_dirs/eval_IDD_L_test_task2_${FEWSHOT_K}shot_wapr_v2
 
 echo "=========================================="
 echo "YOLO-UniOW-L  IDD T2 FEW-SHOT FINETUNING"
@@ -150,6 +150,21 @@ echo ""
 
 # ─── Ensure dirs exist ───────────────────────────────────────────────────────
 mkdir -p slurm_logs "$T2_WORK_DIR" "$T2_EVAL_DIR"
+
+# ─── Re-extract T2 embeddings with novel norm rescaling ─────────────────────
+# Novel CLIP embeddings have norm≈1.0 but base embeddings in BN head space
+# are ~4.3-4.5 after T1. This 4x mismatch causes structurally lower novel
+# logits and weaker gradient signal. Re-extract to rescale novel to ~4.4.
+echo "=========================================="
+echo "Re-extracting T2 embeddings (novel norm rescaling)"
+echo "=========================================="
+python tools/owod_scripts/extract_idd_embeddings.py --task 2 --device auto
+EMBED_RC=$?
+if [ $EMBED_RC -ne 0 ]; then
+    echo "ERROR: Embedding extraction failed (exit code $EMBED_RC)."
+    exit $EMBED_RC
+fi
+echo ""
 
 # ─── Task 2: Train ───────────────────────────────────────────────────────────
 echo "=========================================="
