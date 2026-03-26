@@ -79,10 +79,11 @@ AREA_THRESHOLDS = [96**2, 192**2]
 
 def extract_feat_at_box(box, scale_factor, pad_param, hooked):
     """Extract post-BN feature vector at the center of a GT box."""
-    x1 = box[0] * scale_factor[1] + pad_param[2]
-    y1 = box[1] * scale_factor[0] + pad_param[0]
-    x2 = box[2] * scale_factor[1] + pad_param[2]
-    y2 = box[3] * scale_factor[0] + pad_param[0]
+    # scale_factor from YOLOv5KeepRatioResize: (scale_w, scale_h)
+    x1 = box[0] * scale_factor[0] + pad_param[2]
+    y1 = box[1] * scale_factor[1] + pad_param[0]
+    x2 = box[2] * scale_factor[0] + pad_param[2]
+    y2 = box[3] * scale_factor[1] + pad_param[0]
 
     cx = (x1 + x2) / 2.0
     cy = (y1 + y2) / 2.0
