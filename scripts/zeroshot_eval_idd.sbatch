@@ -22,11 +22,12 @@
 # ============================================================================
 
 PRETRAIN_CONFIG=configs/pretrain/yolo_uniow_l_lora_bn_5e-4_100e_8gpus_obj365v1_goldg_train_lvis_minival.py
-PRETRAIN_CKPT=pretrained/yolo_uniow_l_lora_bn_5e-4_100e_8gpus_obj365v1_goldg_train_lvis_minival.pth
-ZS_CONFIG=configs/owod_ft/yolo_uniow_l_zeroshot_idd.py
+# PRETRAIN_CKPT=pretrained/yolo_uniow_l_lora_bn_5e-4_100e_8gpus_obj365v1_goldg_train_lvis_minival.pth
+PRETRAIN_CKPT=/home/agipml/sourav.rout/ALL_FILES/hypyolo/YOLO-UniOW/work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_train_task2_10shot_wapr/best_owod_Both_epoch_40.pth
+ZS_CONFIG=configs/owod_ft/yolo_uniow_l_trained_cliprompt_eval_idd.py
 EMBED_DIR=embeddings/uniow-l
 EMBED_FILE=${EMBED_DIR}/idd_all.npy
-WORK_DIR=work_dirs/zeroshot_idd_l
+WORK_DIR=work_dirs/trained_cliprompt_eval_idd_l
 
 NUM_GPUS=${SLURM_GPUS_ON_NODE:-1}
 MASTER_PORT=$(( 29500 + RANDOM % 1000 ))

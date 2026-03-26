@@ -39,6 +39,9 @@ FEWSHOT_DIR=data/OWOD/iddsplit
 # SCPI hyperparameters (overridable via env)
 BETA=${BETA:-15.0}
 TAU=${TAU:-0.07}
+SWITCH_RULE=${SWITCH_RULE:-alignment-median}
+MANUAL_ZERO_SHOT=${MANUAL_ZERO_SHOT:-}
+MANUAL_VISUAL=${MANUAL_VISUAL:-}
 
 STEM=yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod
 
@@ -68,6 +71,7 @@ echo "  Few-shot:      k=${FEWSHOT_K}, seed=${FEWSHOT_SEED}"
 echo "  T1 checkpoint: $T1_BEST"
 echo "  SCPI beta:     $BETA"
 echo "  SCPI tau:      $TAU"
+echo "  Switch rule:   $SWITCH_RULE"
 echo "  SCPI npy:      $SCPI_NPY"
 echo "  Eval dir:      $EVAL_DIR"
 echo "=========================================="
@@ -116,16 +120,24 @@ echo "Step 1: SCPI Calibration"
 echo "  Started at: $(date)"
 echo "=========================================="
 
+SCPI_EXTRA_ARGS=""
+if [ -n "$MANUAL_ZERO_SHOT" ] || [ -n "$MANUAL_VISUAL" ]; then
+    SWITCH_RULE=manual
+    SCPI_EXTRA_ARGS="--manual-zero-shot ${MANUAL_ZERO_SHOT} --manual-visual ${MANUAL_VISUAL}"
+fi
+
 DATASET=${DATASET} TASK=2 THRESHOLD=${THRESHOLD} \
     FEWSHOT_K=${FEWSHOT_K} FEWSHOT_SEED=${FEWSHOT_SEED} FEWSHOT_DIR=${FEWSHOT_DIR} \
     python tools/owod_scripts/scpi_calibrate.py \
     --config ${CALIB_CONFIG} \
     --checkpoint ${T1_BEST} \
     --output ${SCPI_NPY} \
+    --switch-rule ${SWITCH_RULE} \
     --beta ${BETA} --tau ${TAU} \
     --fewshot-k ${FEWSHOT_K} --fewshot-seed ${FEWSHOT_SEED} \
     --fewshot-dir ${FEWSHOT_DIR} \
-    --data-root data/OWOD --dataset ${DATASET}
+    --data-root data/OWOD --dataset ${DATASET} \
+    ${SCPI_EXTRA_ARGS}
 
 CALIB_RC=$?
 if [ $CALIB_RC -ne 0 ]; then

@@ -6,6 +6,11 @@ Loads T1 checkpoint, builds the full model in eval mode, extracts visual
 centroids from K-shot support images, blends with zero-shot CLIP prompts,
 and saves a NEW checkpoint with T2-shaped embeddings [16, 512].
 
+NOTE:
+    This script now uses a hard switch for novel classes, not interpolation.
+    We do NOT mix visual centroids (post-BN space) with CLIP text embeddings
+    (CLIP space), because those spaces are misaligned.
+
 The output checkpoint can be evaluated with the normal eval pipeline
 (eval_owod.sbatch) — no hooks, no runtime overhead.
 
@@ -51,6 +56,21 @@ def parse_args():
     p.add_argument('--output', required=True, help='Output npy path for calibrated embeddings')
     p.add_argument('--beta', type=float, default=10.0)
     p.add_argument('--tau', type=float, default=0.15)
+    p.add_argument(
+        '--switch-rule',
+        default='alignment-median',
+        choices=['alignment-median', 'manual'],
+        help=('Hard-switch rule for novel classes: '
+              'alignment-median uses per-class CLIP-vs-visual alignment '
+              'relative to median; manual uses explicit class lists.'))
+    p.add_argument(
+        '--manual-zero-shot',
+        default='',
+        help='Comma-separated novel classes to keep zero-shot (manual mode).')
+    p.add_argument(
+        '--manual-visual',
+        default='',
+        help='Comma-separated novel classes to replace with visual centroid (manual mode).')
     p.add_argument('--fewshot-k', type=int, default=10)
     p.add_argument('--fewshot-seed', type=int, default=1)
     p.add_argument('--fewshot-dir', default='data/OWOD/iddsplit')
@@ -112,6 +132,15 @@ def extract_feat_at_box(box, scale_factor, pad_param, hooked):
 @torch.no_grad()
 def main():
     args = parse_args()
+
+    # Ensure mmengine config env placeholders are always resolvable.
+    os.environ.setdefault('DATASET', args.dataset)
+    os.environ.setdefault('TASK', '2')
+    os.environ.setdefault('THRESHOLD', '0.05')
+    os.environ.setdefault('SAVE', 'False')
+    os.environ.setdefault('FEWSHOT_DIR', args.fewshot_dir)
+    os.environ.setdefault('FEWSHOT_K', str(args.fewshot_k))
+    os.environ.setdefault('FEWSHOT_SEED', str(args.fewshot_seed))
 
     # ── Load config ─────────────────────────────────────────────────────
     cfg = Config.fromfile(args.config)
@@ -241,13 +270,17 @@ def main():
         h.remove()
     hooked.clear()
 
-    # ── Compute interpolated embeddings ─────────────────────────────────
+    # ── Compute hard-switch calibrated embeddings ───────────────────────
     base_norms = model.embeddings[:num_prev].norm(dim=-1).mean().item()
     print(f'[SCPI] Base embedding mean norm: {base_norms:.4f}')
-    print(f'[SCPI] beta={args.beta}, tau={args.tau}')
-    print(f'[SCPI] {"Class":20s} {"n_feat":>6s} {"s_c":>6s} '
-          f'{"alpha":>6s} {"action":>10s}')
-    print('-' * 60)
+    print(f'[SCPI] switch_rule={args.switch_rule}')
+
+    manual_zero_shot = {c.strip() for c in args.manual_zero_shot.split(',') if c.strip()}
+    manual_visual = {c.strip() for c in args.manual_visual.split(',') if c.strip()}
+
+    # Precompute per-class stats first (required for median-based switching).
+    class_stats = {}
+    alignments = []
 
     novel_start = num_prev
     for cls_idx, cls_name in enumerate(novel_classes):
@@ -256,27 +289,90 @@ def main():
 
         feats = class_features.get(cls_name, [])
         if not feats:
-            print(f'[SCPI] {cls_name:20s} {"0":>6s} {"--":>6s} '
-                  f'{"--":>6s} {"skip":>10s}')
+            class_stats[cls_name] = dict(
+                emb_idx=emb_idx,
+                n_feat=0,
+                e_zs=e_zs,
+                e_vis=None,
+                alignment=None,
+                coherence=None,
+            )
             continue
 
         feat_stack = torch.stack(feats)
         e_vis = F.normalize(feat_stack.mean(dim=0), dim=0)
         e_zs_normed = F.normalize(e_zs, dim=0)
-        feat_normed = F.normalize(feat_stack, dim=-1)
-        s_c = (feat_normed @ e_zs_normed).cpu().mean().item()
-        alpha_c = 1.0 - torch.sigmoid(
-            torch.tensor(args.beta * (s_c - args.tau))).item()
 
-        e_final = F.normalize(
-            alpha_c * e_vis + (1.0 - alpha_c) * e_zs, dim=0) * base_norms
+        # Cross-space alignment (used only as RELATIVE signal across novel classes).
+        alignment = F.cosine_similarity(
+            e_vis.unsqueeze(0), e_zs_normed.unsqueeze(0), dim=1).item()
+
+        # Intra-class visual coherence for diagnostics.
+        feat_normed = F.normalize(feat_stack, dim=-1)
+        if feat_normed.shape[0] > 1:
+            sim = feat_normed @ feat_normed.T
+            sim.fill_diagonal_(0.0)
+            coherence = (sim.sum() / (sim.shape[0] * (sim.shape[0] - 1))).item()
+        else:
+            coherence = 1.0
+
+        class_stats[cls_name] = dict(
+            emb_idx=emb_idx,
+            n_feat=len(feats),
+            e_zs=e_zs,
+            e_vis=e_vis,
+            alignment=alignment,
+            coherence=coherence,
+        )
+        alignments.append(alignment)
+
+    alignment_median = float(np.median(alignments)) if alignments else 0.0
+    print(f'[SCPI] alignment_median={alignment_median:.4f}')
+    print(f'[SCPI] {"Class":20s} {"n_feat":>6s} {"align":>7s} '
+          f'{"cohere":>7s} {"action":>10s}')
+    print('-' * 60)
+
+    for cls_name in novel_classes:
+        st = class_stats[cls_name]
+        emb_idx = st['emb_idx']
+        e_zs = st['e_zs']
+        e_vis = st['e_vis']
+        n_feat = st['n_feat']
+        alignment = st['alignment']
+        coherence = st['coherence']
+
+        if n_feat == 0 or e_vis is None:
+            print(f'[SCPI] {cls_name:20s} {0:6d} {"--":>7s} '
+                  f'{"--":>7s} {"skip":>10s}')
+            continue
+
+        if args.switch_rule == 'manual':
+            if cls_name in manual_zero_shot and cls_name in manual_visual:
+                raise ValueError(
+                    f'Class {cls_name} is in both manual-zero-shot and manual-visual.')
+            if cls_name in manual_zero_shot:
+                use_zero_shot = True
+            elif cls_name in manual_visual:
+                use_zero_shot = False
+            else:
+                # Fallback for unspecified classes in manual mode.
+                use_zero_shot = alignment >= alignment_median
+        else:
+            # Auto hard-switch: keep zero-shot for relatively aligned classes,
+            # otherwise switch to visual centroid.
+            use_zero_shot = alignment >= alignment_median
+
+        if use_zero_shot:
+            e_final = F.normalize(e_zs, dim=0) * base_norms
+            action = 'zero-shot'
+        else:
+            e_final = F.normalize(e_vis, dim=0) * base_norms
+            action = 'visual'
+
         model.embeddings.data[emb_idx] = e_final
 
-        action = ('visual' if alpha_c > 0.7
-                  else 'blend' if alpha_c > 0.3
-                  else 'zero-shot')
-        print(f'[SCPI] {cls_name:20s} {len(feats):6d} {s_c:6.3f} '
-              f'{alpha_c:6.3f} {action:>10s}')
+        print(f'[SCPI] {cls_name:20s} {n_feat:6d} {alignment:7.3f} '
+              f'{coherence:7.3f} {action:>10s}')
 
     # ── Save calibrated embeddings as npy ─────────────────────────────
     # Save only the known-class embeddings (no unk/anchor — those come
