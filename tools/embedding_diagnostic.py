@@ -47,6 +47,10 @@ def parse_args():
                    help='output dir (default: visualizations/embed_diag_t{task})')
     p.add_argument('--cache', type=str, default=None,
                    help='path to cached features .pt (skip extraction)')
+    p.add_argument('--zeroshot-emb', type=str, default=None,
+                   help='path to zero-shot CLIP embeddings .npy '
+                        '(e.g. embeddings/uniow-idd/idd_t2.npy). '
+                        'Required for targeted diagnostic experiments.')
     p.add_argument('--method', choices=['umap', 'tsne'], default='umap',
                    help='dimensionality reduction method')
     p.add_argument('--device', type=str, default='cuda:0')
@@ -333,6 +337,29 @@ def load_prompt_embeddings(checkpoint_path, known_classes, task):
         f'Embedding has {emb.shape[0]} rows but expected >= {len(names)}'
     prompt_dict = {names[i]: emb[i] for i in range(len(names))}
     return prompt_dict
+
+
+def load_bn_head_params(checkpoint_path):
+    """Load logit_scale and bias from BNContrastiveHead in checkpoint.
+
+    Returns (logit_scale_exp, bias) as float values — ready to use as:
+        logits = features @ L2norm(prompt).T * logit_scale_exp + bias
+    """
+    ckpt = torch.load(checkpoint_path, map_location='cpu')
+    sd = ckpt if 'state_dict' not in ckpt else ckpt['state_dict']
+
+    # Find the first BNContrastiveHead params (one2one_cls_contrasts.0)
+    prefix = None
+    for k in sd:
+        if 'one2one_cls_contrasts' in k and 'logit_scale' in k:
+            prefix = k.rsplit('.logit_scale', 1)[0]
+            break
+    if prefix is None:
+        raise KeyError('Cannot find BNContrastiveHead logit_scale in checkpoint')
+
+    logit_scale = sd[f'{prefix}.logit_scale'].float()
+    bias = sd[f'{prefix}.bias'].float()
+    return logit_scale.exp().item(), bias.item()
 
 
 # ── Cosine Utilities ─────────────────────────────────────────────────────────
@@ -898,6 +925,526 @@ def write_analysis(features, logits_all, gt_meta, prompt_dict, known_classes,
     print('\n'.join(lines))
 
 
+# ── Targeted Diagnostic Experiments ──────────────────────────────────────────
+#
+# These five experiments diagnose specific failure modes in novel-class
+# prompt learning.  All operate on cached post-BN features + logits
+# extracted at GT locations — no additional model inference required.
+#
+# Prerequisites:
+#   - features/logits extracted by extract_features() or loaded from cache
+#   - fine-tuned prompt dict from checkpoint  (prompt_dict)
+#   - zero-shot CLIP embeddings from .npy      (zeroshot_dict)
+#   - BN head params (logit_scale_exp, bias)   from checkpoint
+
+
+def load_zeroshot_prompts(npy_path, known_classes):
+    """Load zero-shot CLIP embeddings from .npy, return dict like prompt_dict."""
+    emb = torch.from_numpy(np.load(npy_path)).float()  # (num_known, 512)
+    assert emb.shape[0] >= len(known_classes), \
+        f'Zero-shot npy has {emb.shape[0]} rows, expected >= {len(known_classes)}'
+    return {known_classes[i]: emb[i] for i in range(len(known_classes))}
+
+
+def exp1_cross_prompt_score_matrix(features, prompt_dict, zeroshot_dict,
+                                   known_classes, num_prev, out_dir):
+    """Exp 1: For every novel-class GT, scatter fine-tuned vs zero-shot score.
+
+    Reveals whether fine-tuning helps/hurts uniformly or instance-specifically.
+    Points above the diagonal = fine-tuning helped that instance.
+    """
+    novel_classes = known_classes[num_prev:]
+    exp_dir = os.path.join(out_dir, 'exp1_cross_prompt')
+    os.makedirs(exp_dir, exist_ok=True)
+
+    lines = ['=' * 70,
+             'EXP 1: Cross-Prompt Score Matrix (fine-tuned vs zero-shot)',
+             '=' * 70, '']
+
+    n_novel = len(novel_classes)
+    cols = min(n_novel, 3)
+    rows = (n_novel + cols - 1) // cols
+    fig, axes = plt.subplots(rows, cols, figsize=(6 * cols, 5 * rows), squeeze=False)
+
+    for i, cls in enumerate(novel_classes):
+        ax = axes[i // cols, i % cols]
+        if cls not in features or len(features[cls]) == 0:
+            ax.set_title(f'{cls} (no features)')
+            lines.append(f'  {cls}: SKIPPED (no features)')
+            continue
+        if cls not in prompt_dict or cls not in zeroshot_dict:
+            ax.set_title(f'{cls} (missing prompt)')
+            continue
+
+        feats = features[cls].float()  # (N, 512)
+        e_ft = F.normalize(prompt_dict[cls].float().unsqueeze(0), dim=-1)    # (1, 512)
+        e_zs = F.normalize(zeroshot_dict[cls].float().unsqueeze(0), dim=-1)  # (1, 512)
+
+        scores_ft = (feats @ e_ft.T).squeeze().numpy()  # (N,)
+        scores_zs = (feats @ e_zs.T).squeeze().numpy()  # (N,)
+
+        above = (scores_ft > scores_zs).sum()
+        below = (scores_ft < scores_zs).sum()
+        total = len(scores_ft)
+
+        ax.scatter(scores_zs, scores_ft, s=8, alpha=0.4, c='steelblue')
+        lim_lo = min(scores_zs.min(), scores_ft.min()) - 0.02
+        lim_hi = max(scores_zs.max(), scores_ft.max()) + 0.02
+        ax.plot([lim_lo, lim_hi], [lim_lo, lim_hi], 'k--', alpha=0.4, linewidth=1)
+        ax.set_xlabel('score (zero-shot prompt)')
+        ax.set_ylabel('score (fine-tuned prompt)')
+        ax.set_title(f'{cls}  (n={total})\n'
+                     f'FT better: {above} ({100*above/total:.1f}%)  '
+                     f'ZS better: {below} ({100*below/total:.1f}%)')
+
+        mean_ft = scores_ft.mean()
+        mean_zs = scores_zs.mean()
+        lines.append(f'  {cls:20s}: n={total:5d}  '
+                     f'mean_ft={mean_ft:.4f}  mean_zs={mean_zs:.4f}  '
+                     f'delta={mean_ft - mean_zs:+.4f}  '
+                     f'FT_better={above}/{total} ({100*above/total:.1f}%)')
+
+    # Hide unused axes
+    for i in range(n_novel, rows * cols):
+        axes[i // cols, i % cols].set_visible(False)
+
+    fig.suptitle('Exp 1: Per-instance fine-tuned vs zero-shot prompt score\n'
+                 '(above diagonal = fine-tuning helped)', fontsize=13)
+    fig.tight_layout()
+    fig.savefig(os.path.join(exp_dir, 'cross_prompt_scatter.png'), dpi=150)
+    plt.close(fig)
+
+    lines.append('')
+    return lines
+
+
+def exp2_score_leakage_heatmap(features, prompt_dict, zeroshot_dict,
+                               known_classes, num_prev, out_dir,
+                               logit_scale_exp, bias):
+    """Exp 2: Where does the score mass go when a novel GT scores low?
+
+    Computes full logit vector using both FT and ZS prompts for novel-class
+    GT features.  Delta heatmap shows which channels gained/lost.
+    """
+    novel_classes = known_classes[num_prev:]
+    exp_dir = os.path.join(out_dir, 'exp2_score_leakage')
+    os.makedirs(exp_dir, exist_ok=True)
+
+    # Build prompt matrices: (num_channels, 512)
+    all_names = list(known_classes) + ['unknown', 'anchor']
+    num_channels = len(all_names)
+
+    # Fine-tuned prompt matrix
+    ft_prompts = torch.stack([prompt_dict[n] for n in all_names
+                              if n in prompt_dict])
+    ft_prompts = F.normalize(ft_prompts.float(), dim=-1)
+
+    # Zero-shot prompt matrix (unknown/anchor may not be in zeroshot_dict)
+    zs_list = []
+    zs_names = []
+    for n in all_names:
+        if n in zeroshot_dict:
+            zs_list.append(zeroshot_dict[n])
+            zs_names.append(n)
+        elif n in prompt_dict:
+            # For unknown/anchor: use the fine-tuned version (not calibrated by ZS)
+            zs_list.append(prompt_dict[n])
+            zs_names.append(n)
+    zs_prompts = torch.stack(zs_list)
+    zs_prompts = F.normalize(zs_prompts.float(), dim=-1)
+
+    K = ft_prompts.shape[0]
+    channel_names = [n for n in all_names if n in prompt_dict][:K]
+
+    # For each novel GT class, compute mean logit delta across all channels
+    delta_matrix = np.zeros((len(novel_classes), K))
+    count_per_class = []
+
+    lines = ['=' * 70,
+             'EXP 2: Per-Channel Score Leakage at Novel GT Locations',
+             '=' * 70, '',
+             f'  logit_scale_exp={logit_scale_exp:.4f}, bias={bias:.4f}', '']
+
+    for ri, cls in enumerate(novel_classes):
+        if cls not in features or len(features[cls]) == 0:
+            count_per_class.append(0)
+            lines.append(f'  {cls}: SKIPPED')
+            continue
+
+        feats = features[cls].float()  # (N, 512)
+        n = len(feats)
+        count_per_class.append(n)
+
+        # Compute logits: feat @ prompt.T * scale + bias
+        logits_ft = feats @ ft_prompts.T * logit_scale_exp + bias  # (N, K)
+        logits_zs = feats @ zs_prompts.T * logit_scale_exp + bias  # (N, K)
+
+        # Mean sigmoid scores
+        scores_ft = torch.sigmoid(logits_ft).mean(dim=0).numpy()  # (K,)
+        scores_zs = torch.sigmoid(logits_zs).mean(dim=0).numpy()  # (K,)
+        delta = scores_ft - scores_zs
+        delta_matrix[ri] = delta
+
+        # Report: which channel gained/lost most
+        gain_idx = delta.argmax()
+        loss_idx = delta.argmin()
+        lines.append(f'  {cls:20s} (n={n}): '
+                     f'biggest gain: {channel_names[gain_idx]} ({delta[gain_idx]:+.4f}), '
+                     f'biggest loss: {channel_names[loss_idx]} ({delta[loss_idx]:+.4f})')
+
+    # Heatmap
+    fig, ax = plt.subplots(figsize=(max(14, K * 0.8), max(4, len(novel_classes) * 0.8)))
+    vabs = max(abs(delta_matrix.min()), abs(delta_matrix.max()), 0.01)
+    im = ax.imshow(delta_matrix, cmap='RdBu_r', vmin=-vabs, vmax=vabs, aspect='auto')
+
+    ax.set_xticks(range(K))
+    ax.set_xticklabels(channel_names, rotation=45, ha='right', fontsize=8)
+    ax.set_yticks(range(len(novel_classes)))
+    ax.set_yticklabels([f'{c} (n={count_per_class[i]})'
+                        for i, c in enumerate(novel_classes)], fontsize=9)
+
+    for i in range(len(novel_classes)):
+        for j in range(K):
+            v = delta_matrix[i, j]
+            if abs(v) > 0.005:
+                ax.text(j, i, f'{v:+.3f}', ha='center', va='center', fontsize=6,
+                        color='black' if abs(v) < vabs * 0.6 else 'white')
+
+    ax.set_xlabel('Scoring channel (prompt)', fontsize=10)
+    ax.set_ylabel('Novel GT class', fontsize=10)
+    ax.set_title('Exp 2: Score delta (fine-tuned minus zero-shot) at novel GT locations\n'
+                 'Red = FT scores higher, Blue = ZS scores higher', fontsize=11)
+    fig.colorbar(im, ax=ax, label='mean sigmoid delta')
+    fig.tight_layout()
+    fig.savefig(os.path.join(exp_dir, 'score_leakage_heatmap.png'), dpi=150)
+    plt.close(fig)
+
+    lines.append('')
+    return lines
+
+
+def exp3_prompt_drift_analysis(features, prompt_dict, zeroshot_dict,
+                               known_classes, num_prev, out_dir):
+    """Exp 3: Where did fine-tuning move each novel prompt?
+
+    For each novel class, computes 5 cosine metrics that reveal the
+    direction and magnitude of prompt drift.
+    """
+    novel_classes = known_classes[num_prev:]
+    base_classes = known_classes[:num_prev]
+    exp_dir = os.path.join(out_dir, 'exp3_prompt_drift')
+    os.makedirs(exp_dir, exist_ok=True)
+
+    # Compute visual centroids from full test set features
+    centroids = {}
+    for cls, feats in features.items():
+        if len(feats) > 0:
+            centroids[cls] = feats.float().mean(dim=0)
+
+    lines = ['=' * 70,
+             'EXP 3: Prompt Direction Drift Analysis',
+             '=' * 70, '']
+
+    header = (f'{"class":20s} | {"cos(ft,zs)":>10s} | {"cos(ft,ctr)":>11s} | '
+              f'{"cos(zs,ctr)":>11s} | {"Δ_align":>8s} | '
+              f'{"nearest_base":>25s} | {"nearest_novel":>25s}')
+    lines.append(header)
+    lines.append('-' * len(header))
+
+    table_data = []
+
+    for cls in novel_classes:
+        if cls not in prompt_dict or cls not in zeroshot_dict:
+            continue
+
+        e_ft = F.normalize(prompt_dict[cls].float().unsqueeze(0), dim=-1).squeeze()
+        e_zs = F.normalize(zeroshot_dict[cls].float().unsqueeze(0), dim=-1).squeeze()
+
+        # 1. How far did prompt move from init?
+        cos_ft_zs = cosine_sim(e_ft, e_zs)
+
+        # 2 & 3. Alignment with visual centroid
+        cos_ft_ctr = ''
+        cos_zs_ctr = ''
+        delta_align = ''
+        if cls in centroids:
+            ctr = centroids[cls]
+            cos_ft_ctr_v = cosine_sim(e_ft, ctr)
+            cos_zs_ctr_v = cosine_sim(e_zs, ctr)
+            cos_ft_ctr = f'{cos_ft_ctr_v:.4f}'
+            cos_zs_ctr = f'{cos_zs_ctr_v:.4f}'
+            delta_align = f'{cos_ft_ctr_v - cos_zs_ctr_v:+.4f}'
+
+        # 4. Nearest base class prompt
+        nearest_base = ''
+        best_base_cos = -2.0
+        for bc in base_classes:
+            if bc in prompt_dict:
+                e_b = F.normalize(prompt_dict[bc].float().unsqueeze(0), dim=-1).squeeze()
+                c = cosine_sim(e_ft, e_b)
+                if c > best_base_cos:
+                    best_base_cos = c
+                    nearest_base = f'{bc} ({c:.4f})'
+
+        # 5. Nearest other novel prompt
+        nearest_novel = ''
+        best_novel_cos = -2.0
+        for nc in novel_classes:
+            if nc == cls or nc not in prompt_dict:
+                continue
+            e_n = F.normalize(prompt_dict[nc].float().unsqueeze(0), dim=-1).squeeze()
+            c = cosine_sim(e_ft, e_n)
+            if c > best_novel_cos:
+                best_novel_cos = c
+                nearest_novel = f'{nc} ({c:.4f})'
+
+        lines.append(f'{cls:20s} | {cos_ft_zs:10.4f} | {cos_ft_ctr:>11s} | '
+                     f'{cos_zs_ctr:>11s} | {delta_align:>8s} | '
+                     f'{nearest_base:>25s} | {nearest_novel:>25s}')
+
+        table_data.append(dict(cls=cls, cos_ft_zs=cos_ft_zs,
+                               cos_ft_ctr=cos_ft_ctr, cos_zs_ctr=cos_zs_ctr,
+                               delta_align=delta_align))
+
+    lines.append('')
+    lines.append('Interpretation:')
+    lines.append('  cos(ft,zs) close to 1.0 = prompt barely moved from CLIP init')
+    lines.append('  Δ_align > 0 = fine-tuning IMPROVED alignment with visual centroid')
+    lines.append('  Δ_align < 0 = fine-tuning HURT alignment (prompt drifted away)')
+    lines.append('')
+
+    # Save table as CSV
+    with open(os.path.join(exp_dir, 'prompt_drift_table.csv'), 'w') as f:
+        f.write('class,cos_ft_zs,cos_ft_centroid,cos_zs_centroid,delta_align\n')
+        for d in table_data:
+            f.write(f'{d["cls"]},{d["cos_ft_zs"]:.4f},'
+                    f'{d["cos_ft_ctr"]},{d["cos_zs_ctr"]},{d["delta_align"]}\n')
+
+    return lines
+
+
+def exp4_aose_mechanism(logits_all, gt_meta, known_classes, num_prev, out_dir):
+    """Exp 4: For each A-OSE event, is it high-confidence or marginal?
+
+    Decomposes unknown-as-known misclassifications by score margin.
+    Large margins = prompt genuinely misfired. Tiny margins = fixable by threshold.
+    """
+    if 'unknown' not in logits_all or len(logits_all['unknown']) == 0:
+        return ['', 'EXP 4: SKIPPED (no unknown features)', '']
+
+    exp_dir = os.path.join(out_dir, 'exp4_aose_mechanism')
+    os.makedirs(exp_dir, exist_ok=True)
+
+    unk_logits = logits_all['unknown']  # (N, K+extra)
+    unk_meta = gt_meta['unknown']
+    num_known = len(known_classes)
+    unk_ch_idx = num_known  # unknown channel index
+
+    scores = torch.sigmoid(unk_logits)
+    known_scores = scores[:, :num_known]
+    unk_score = scores[:, unk_ch_idx] if scores.shape[1] > unk_ch_idx else torch.zeros(len(scores))
+
+    # Max known score and which class
+    max_known_score, max_known_idx = known_scores.max(dim=1)
+    margin = (max_known_score - unk_score).numpy()  # positive = known wins (A-OSE)
+
+    # Rank of unknown channel among all channels
+    all_known_plus_unk = scores[:, :num_known + 1] if scores.shape[1] > unk_ch_idx else known_scores
+    # Rank: how many channels score higher than unknown channel
+    unk_rank = (all_known_plus_unk > unk_score.unsqueeze(1)).sum(dim=1).numpy()  # 0=top, higher=worse
+
+    lines = ['=' * 70,
+             'EXP 4: A-OSE Mechanism Decomposition',
+             '=' * 70, '']
+
+    # Overall stats
+    lines.append(f'  Total unknown GT instances: {len(margin)}')
+    lines.append(f'  Margin (max_known - unknown_score):')
+    lines.append(f'    mean={margin.mean():.4f}  median={np.median(margin):.4f}  '
+                 f'std={margin.std():.4f}')
+    lines.append(f'    margin < 0.05 (near-marginal):  '
+                 f'{(np.abs(margin) < 0.05).sum()} ({100*(np.abs(margin) < 0.05).mean():.1f}%)')
+    lines.append(f'    margin > 0.20 (high-confidence): '
+                 f'{(margin > 0.20).sum()} ({100*(margin > 0.20).mean():.1f}%)')
+    lines.append(f'  Unknown channel rank (0=best):')
+    lines.append(f'    mean={unk_rank.mean():.1f}  median={np.median(unk_rank):.0f}')
+    lines.append('')
+
+    # Per absorbing-class breakdown
+    lines.append(f'  {"absorbing class":25s} | {"count":>5s} | {"mean_margin":>11s} | '
+                 f'{"median_margin":>13s} | {"mean_unk_rank":>13s}')
+    lines.append('  ' + '-' * 80)
+
+    absorb_classes = sorted(set(max_known_idx.numpy()))
+    for ci in absorb_classes:
+        mask = (max_known_idx == ci).numpy()
+        n = mask.sum()
+        if n == 0:
+            continue
+        lines.append(f'  {known_classes[ci]:25s} | {n:5d} | '
+                     f'{margin[mask].mean():11.4f} | '
+                     f'{np.median(margin[mask]):13.4f} | '
+                     f'{unk_rank[mask].mean():13.1f}')
+
+    lines.append('')
+
+    # Per original unknown class
+    lines.append('  Per original unknown class:')
+    orig_classes = sorted(set(m['original_cls'] for m in unk_meta))
+    for orig in orig_classes:
+        mask = np.array([m['original_cls'] == orig for m in unk_meta])
+        n = mask.sum()
+        if n == 0:
+            continue
+        lines.append(f'    {orig:20s}: n={n:4d}  mean_margin={margin[mask].mean():.4f}  '
+                     f'marginal(<0.05)={100*(np.abs(margin[mask]) < 0.05).mean():.1f}%  '
+                     f'high_conf(>0.20)={100*(margin[mask] > 0.20).mean():.1f}%')
+
+    lines.append('')
+
+    # Histogram plot
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+    # Left: margin histogram, colored by absorbing class
+    top_absorbers = sorted(absorb_classes, key=lambda c: -(max_known_idx == c).sum().item())[:5]
+    for ci in top_absorbers:
+        mask = (max_known_idx == ci).numpy()
+        ax1.hist(margin[mask], bins=50, alpha=0.5, label=known_classes[ci], density=True)
+    ax1.axvline(x=0, color='black', linestyle='--', alpha=0.5)
+    ax1.axvline(x=0.05, color='red', linestyle=':', alpha=0.5, label='margin=0.05')
+    ax1.set_xlabel('margin (max_known_score - unknown_score)')
+    ax1.set_ylabel('density')
+    ax1.set_title('A-OSE Margin Distribution\n(positive = known class wins)')
+    ax1.legend(fontsize=7)
+
+    # Right: margin histogram by original unknown class
+    for orig in orig_classes:
+        mask = np.array([m['original_cls'] == orig for m in unk_meta])
+        if mask.sum() > 0:
+            ax2.hist(margin[mask], bins=50, alpha=0.4, label=orig, density=True)
+    ax2.axvline(x=0, color='black', linestyle='--', alpha=0.5)
+    ax2.set_xlabel('margin (max_known_score - unknown_score)')
+    ax2.set_ylabel('density')
+    ax2.set_title('A-OSE Margin by True Unknown Class')
+    ax2.legend(fontsize=7)
+
+    fig.suptitle('Exp 4: A-OSE Mechanism — is it confident or marginal?', fontsize=12)
+    fig.tight_layout()
+    fig.savefig(os.path.join(exp_dir, 'aose_margin_histograms.png'), dpi=150)
+    plt.close(fig)
+
+    return lines
+
+
+def exp5_cross_alignment_matrix(features, prompt_dict, zeroshot_dict,
+                                known_classes, num_prev, out_dir):
+    """Exp 5: Prompt × Visual-Centroid cross-alignment matrix.
+
+    Rows = prompts, Columns = visual centroids.  Diagonal should be high.
+    Off-diagonal highs = misaligned prompts.  Delta (FT - ZS) shows what
+    fine-tuning improved and what it degraded.
+    """
+    exp_dir = os.path.join(out_dir, 'exp5_cross_alignment')
+    os.makedirs(exp_dir, exist_ok=True)
+
+    # Only use classes with both features and prompts
+    classes_with_feats = [c for c in known_classes
+                         if c in features and len(features[c]) > 0
+                         and c in prompt_dict]
+
+    if len(classes_with_feats) < 2:
+        return ['', 'EXP 5: SKIPPED (not enough classes with features)', '']
+
+    # Visual centroids
+    centroids = torch.stack([features[c].float().mean(dim=0)
+                            for c in classes_with_feats])  # (C, 512)
+
+    # FT prompts
+    ft_prompts = torch.stack([F.normalize(prompt_dict[c].float().unsqueeze(0), dim=-1).squeeze()
+                             for c in classes_with_feats])  # (C, 512)
+
+    # ZS prompts (use FT for classes not in zeroshot_dict)
+    zs_list = []
+    for c in classes_with_feats:
+        if c in zeroshot_dict:
+            zs_list.append(F.normalize(zeroshot_dict[c].float().unsqueeze(0), dim=-1).squeeze())
+        else:
+            zs_list.append(F.normalize(prompt_dict[c].float().unsqueeze(0), dim=-1).squeeze())
+    zs_prompts = torch.stack(zs_list)
+
+    # Cross-alignment: prompt_i dot centroid_j
+    # Centroids are raw BN features (not L2-normed) — this matches actual scoring
+    ctr_normed = F.normalize(centroids, dim=-1)
+    cross_ft = (ft_prompts @ ctr_normed.T).numpy()   # (C, C)
+    cross_zs = (zs_prompts @ ctr_normed.T).numpy()   # (C, C)
+    cross_delta = cross_ft - cross_zs                  # positive = FT improved
+
+    lines = ['=' * 70,
+             'EXP 5: Cross-Alignment Matrix (Prompt × Visual Centroid)',
+             '=' * 70, '']
+
+    # Report diagonal values
+    lines.append(f'  {"class":20s} | {"FT_diag":>8s} | {"ZS_diag":>8s} | {"Δ_diag":>8s}')
+    lines.append('  ' + '-' * 55)
+    for i, cls in enumerate(classes_with_feats):
+        marker = ' *' if cls in known_classes[num_prev:] else ''
+        lines.append(f'  {cls:20s} | {cross_ft[i,i]:8.4f} | {cross_zs[i,i]:8.4f} | '
+                     f'{cross_delta[i,i]:+8.4f}{marker}')
+    lines.append('  (* = novel class)')
+    lines.append('')
+
+    # Report worst off-diagonal in delta (biggest degradation)
+    lines.append('  Top 5 biggest degradations (FT vs ZS off-diagonal):')
+    n = len(classes_with_feats)
+    off_diag = []
+    for i in range(n):
+        for j in range(n):
+            if i != j:
+                off_diag.append((classes_with_feats[i], classes_with_feats[j],
+                                cross_delta[i, j]))
+    off_diag.sort(key=lambda x: x[2])
+    for prompt_cls, centroid_cls, d in off_diag[:5]:
+        lines.append(f'    prompt({prompt_cls}) → centroid({centroid_cls}): Δ={d:+.4f}  '
+                     f'(FT={cross_ft[classes_with_feats.index(prompt_cls), classes_with_feats.index(centroid_cls)]:.4f})')
+    lines.append('')
+
+    # Three heatmaps side by side
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(22, 7))
+
+    for ax, mat, title, cmap_name in [
+        (ax1, cross_ft, 'Fine-tuned Prompt × Centroid', 'YlOrRd'),
+        (ax2, cross_zs, 'Zero-shot Prompt × Centroid', 'YlOrRd'),
+        (ax3, cross_delta, 'Delta (FT − ZS)', 'RdBu_r'),
+    ]:
+        if 'Delta' in title:
+            vabs = max(abs(mat.min()), abs(mat.max()), 0.01)
+            im = ax.imshow(mat, cmap=cmap_name, vmin=-vabs, vmax=vabs, aspect='auto')
+        else:
+            im = ax.imshow(mat, cmap=cmap_name, vmin=0, vmax=1, aspect='auto')
+
+        ax.set_xticks(range(n))
+        ax.set_xticklabels(classes_with_feats, rotation=45, ha='right', fontsize=7)
+        ax.set_yticks(range(n))
+        ax.set_yticklabels(classes_with_feats, fontsize=7)
+        ax.set_xlabel('Visual centroid', fontsize=9)
+        ax.set_ylabel('Prompt', fontsize=9)
+        ax.set_title(title, fontsize=10)
+        fig.colorbar(im, ax=ax, shrink=0.8)
+
+        for i in range(n):
+            for j in range(n):
+                ax.text(j, i, f'{mat[i,j]:.2f}', ha='center', va='center',
+                        fontsize=5)
+
+    fig.suptitle('Exp 5: Cross-Alignment — does each prompt point at its own centroid?',
+                 fontsize=12)
+    fig.tight_layout()
+    fig.savefig(os.path.join(exp_dir, 'cross_alignment_matrix.png'), dpi=150)
+    plt.close(fig)
+
+    return lines
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -985,6 +1532,45 @@ def main():
     # ── Step 5: Write analysis ──
     write_analysis(features, logits_all, gt_meta, prompt_dict, known_classes,
                    num_prev, args.output_dir)
+
+    # ── Step 6: Targeted diagnostic experiments (require --zeroshot-emb) ──
+    if args.zeroshot_emb:
+        print(f'\nRunning targeted diagnostic experiments (zeroshot: {args.zeroshot_emb})...')
+        zeroshot_dict = load_zeroshot_prompts(args.zeroshot_emb, known_classes)
+        logit_scale_exp, bias = load_bn_head_params(args.checkpoint)
+
+        targeted_lines = [
+            '=' * 80,
+            'TARGETED DIAGNOSTIC EXPERIMENTS',
+            f'  Zero-shot embeddings: {args.zeroshot_emb}',
+            f'  BN head: logit_scale_exp={logit_scale_exp:.4f}, bias={bias:.4f}',
+            '=' * 80,
+            '',
+        ]
+
+        targeted_lines += exp1_cross_prompt_score_matrix(
+            features, prompt_dict, zeroshot_dict, known_classes, num_prev, args.output_dir)
+
+        targeted_lines += exp2_score_leakage_heatmap(
+            features, prompt_dict, zeroshot_dict, known_classes, num_prev, args.output_dir,
+            logit_scale_exp, bias)
+
+        targeted_lines += exp3_prompt_drift_analysis(
+            features, prompt_dict, zeroshot_dict, known_classes, num_prev, args.output_dir)
+
+        targeted_lines += exp4_aose_mechanism(
+            logits_all, gt_meta, known_classes, num_prev, args.output_dir)
+
+        targeted_lines += exp5_cross_alignment_matrix(
+            features, prompt_dict, zeroshot_dict, known_classes, num_prev, args.output_dir)
+
+        targeted_out = os.path.join(args.output_dir, 'targeted_analysis.txt')
+        with open(targeted_out, 'w') as f:
+            f.write('\n'.join(targeted_lines))
+        print('\n'.join(targeted_lines))
+        print(f'\nTargeted analysis saved to {targeted_out}')
+    else:
+        print('\n[skip] Targeted experiments not run — pass --zeroshot-emb to enable.')
 
     print(f'\nAll outputs saved to {args.output_dir}/')
 

@@ -12,18 +12,21 @@
 #SBATCH --time=01:00:00
 
 # ============================================================================
-# YOLO-UniOW-L  IDD OWOD  — Task 2 (SCPI: Training-Free Novel Calibration)
+# YOLO-UniOW-L  IDD OWOD  — Task 2  SCPI (Post-Training Calibration)
 # ============================================================================
 #
-# Two-step approach:
-#   Step 1: Offline calibration — builds model, extracts visual centroids from
-#           K-shot support, blends with CLIP prompts → saves .npy (~30s)
-#   Step 2: Normal eval — loads T1 checkpoint, SCPIHook patches novel
-#           embeddings from npy before test starts → normal speed (~5min)
+# SCPI runs AFTER T2 fine-tuning (WAPR, 40 epochs).
+#
+#   Step 1: SCPI calibration — load T2 checkpoint, extract post-BN visual
+#           features from K-shot support, decide per novel class: keep
+#           fine-tuned prompt or revert to zero-shot CLIP prompt → .npy
+#   Step 2: Eval — load T2 checkpoint, SCPIHook patches only novel embeddings
+#           (slots 8-13) from the .npy. Base/unk/anchor stay from T2 ckpt.
+#
+# Requires: T2 fine-tuned checkpoint already exists.
 #
 # Usage:
 #   sbatch scripts/train_idd_owod_l_t2_scpi.sbatch
-#   BETA=15 TAU=0.07 sbatch scripts/train_idd_owod_l_t2_scpi.sbatch
 # ============================================================================
 
 NUM_GPUS=${1:-${SLURM_GPUS_ON_NODE:-1}}
@@ -36,29 +39,25 @@ FEWSHOT_K=10
 FEWSHOT_SEED=1
 FEWSHOT_DIR=data/OWOD/iddsplit
 
-# SCPI hyperparameters (overridable via env)
-BETA=${BETA:-15.0}
-TAU=${TAU:-0.07}
-SWITCH_RULE=${SWITCH_RULE:-alignment-median}
-MANUAL_ZERO_SHOT=${MANUAL_ZERO_SHOT:-}
-MANUAL_VISUAL=${MANUAL_VISUAL:-}
-
 STEM=yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod
 
-# T1 checkpoint
-T1_WORK_DIR=work_dirs/${STEM}_idd_train_task1
-T1_BEST=$(ls -t "${T1_WORK_DIR}"/best*.pth 2>/dev/null | head -1)
+# T2 fine-tuned checkpoint (produced by WAPR training)
+T2_WORK_DIR=work_dirs/${STEM}_idd_train_task2_${FEWSHOT_K}shot_wapr
+T2_BEST=$(ls -t "${T2_WORK_DIR}"/best*.pth 2>/dev/null | head -1)
+
+# Zero-shot CLIP embeddings (original, pre-training)
+ZEROSHOT_EMB=embeddings/uniow-idd/idd_t2.npy
 
 # Configs
 CALIB_CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_wapr.py
 EVAL_CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_scpi.py
 
 # Output paths
-SCPI_NPY=embeddings/uniow-idd/idd_t2_scpi_b${BETA}_t${TAU}.npy
-EVAL_DIR=work_dirs/eval_IDD_L_test_task2_${FEWSHOT_K}shot_scpi_b${BETA}_t${TAU}
+SCPI_NPY=embeddings/uniow-idd/idd_t2_scpi.npy
+EVAL_DIR=work_dirs/eval_IDD_L_test_task2_${FEWSHOT_K}shot_scpi
 
 echo "=========================================="
-echo "YOLO-UniOW-L  IDD T2 SCPI (Training-Free)"
+echo "YOLO-UniOW-L  IDD T2 SCPI (Post-Training)"
 echo "=========================================="
 echo "Job started at:  $(date)"
 echo "Running on node: $(hostname)"
@@ -66,22 +65,26 @@ echo "Job ID:          $SLURM_JOB_ID"
 echo ""
 echo "Configuration:"
 echo "  Dataset:       $DATASET"
-echo "  Task:          2 (6 novel classes, 6 unknown)"
+echo "  Task:          2 (6 novel classes)"
 echo "  Few-shot:      k=${FEWSHOT_K}, seed=${FEWSHOT_SEED}"
-echo "  T1 checkpoint: $T1_BEST"
-echo "  SCPI beta:     $BETA"
-echo "  SCPI tau:      $TAU"
-echo "  Switch rule:   $SWITCH_RULE"
+echo "  T2 checkpoint: $T2_BEST"
+echo "  Zero-shot emb: $ZEROSHOT_EMB"
 echo "  SCPI npy:      $SCPI_NPY"
 echo "  Eval dir:      $EVAL_DIR"
 echo "=========================================="
 
 # ─── Validate ─────────────────────────────────────────────────────────────────
-if [ -z "$T1_BEST" ] || [ ! -f "$T1_BEST" ]; then
-    echo "ERROR: T1 best checkpoint not found in ${T1_WORK_DIR}."
+if [ -z "$T2_BEST" ] || [ ! -f "$T2_BEST" ]; then
+    echo "ERROR: T2 best checkpoint not found in ${T2_WORK_DIR}."
+    echo "       Run T2 fine-tuning (WAPR) first."
     exit 1
 fi
-echo "T1 best checkpoint: $(du -h "$T1_BEST" | cut -f1) — $T1_BEST"
+echo "T2 best checkpoint: $(du -h "$T2_BEST" | cut -f1) — $T2_BEST"
+
+if [ ! -f "$ZEROSHOT_EMB" ]; then
+    echo "ERROR: Zero-shot embeddings not found: $ZEROSHOT_EMB"
+    exit 1
+fi
 
 SEED_DIR="${FEWSHOT_DIR}/seed${FEWSHOT_SEED}"
 for cls in bus truck tanker_vehicle crane_truck street_cart excavator; do
@@ -114,30 +117,22 @@ export OMP_NUM_THREADS=$(( SLURM_CPUS_PER_TASK / NUM_GPUS ))
 
 mkdir -p slurm_logs "$EVAL_DIR" embeddings/uniow-idd
 
-# ─── Step 1: SCPI Calibration → save .npy (~30s) ─────────────────────────────
+# ─── Step 1: SCPI Calibration → save .npy ─────────────────────────────────────
 echo "=========================================="
-echo "Step 1: SCPI Calibration"
+echo "Step 1: SCPI Calibration (post-training)"
 echo "  Started at: $(date)"
 echo "=========================================="
-
-SCPI_EXTRA_ARGS=""
-if [ -n "$MANUAL_ZERO_SHOT" ] || [ -n "$MANUAL_VISUAL" ]; then
-    SWITCH_RULE=manual
-    SCPI_EXTRA_ARGS="--manual-zero-shot ${MANUAL_ZERO_SHOT} --manual-visual ${MANUAL_VISUAL}"
-fi
 
 DATASET=${DATASET} TASK=2 THRESHOLD=${THRESHOLD} \
     FEWSHOT_K=${FEWSHOT_K} FEWSHOT_SEED=${FEWSHOT_SEED} FEWSHOT_DIR=${FEWSHOT_DIR} \
     python tools/owod_scripts/scpi_calibrate.py \
     --config ${CALIB_CONFIG} \
-    --checkpoint ${T1_BEST} \
+    --checkpoint ${T2_BEST} \
+    --zeroshot-emb ${ZEROSHOT_EMB} \
     --output ${SCPI_NPY} \
-    --switch-rule ${SWITCH_RULE} \
-    --beta ${BETA} --tau ${TAU} \
     --fewshot-k ${FEWSHOT_K} --fewshot-seed ${FEWSHOT_SEED} \
     --fewshot-dir ${FEWSHOT_DIR} \
-    --data-root data/OWOD --dataset ${DATASET} \
-    ${SCPI_EXTRA_ARGS}
+    --data-root data/OWOD --dataset ${DATASET}
 
 CALIB_RC=$?
 if [ $CALIB_RC -ne 0 ]; then
@@ -146,18 +141,21 @@ if [ $CALIB_RC -ne 0 ]; then
 fi
 echo ""
 
-# ─── Step 2: Normal eval with T1 checkpoint + SCPI embedding override (~5min) ─
+# ─── Step 2: Eval with T2 checkpoint + SCPI novel embeddings ──────────────────
 echo "=========================================="
-echo "Step 2: Evaluation"
+echo "Step 2: Evaluation (T2 ckpt + SCPI novel prompts)"
 echo "  Started at: $(date)"
 echo "=========================================="
 
-DATASET=${DATASET} TASK=2 THRESHOLD=${THRESHOLD} SAVE=True \
+DATASET=${DATASET} TASK=2 THRESHOLD=${THRESHOLD} SAVE=False \
     FEWSHOT_DIR=${FEWSHOT_DIR} FEWSHOT_K=${FEWSHOT_K} FEWSHOT_SEED=${FEWSHOT_SEED} \
     PORT=${MASTER_PORT} \
-    ./tools/dist_test.sh ${EVAL_CONFIG} ${T1_BEST} ${NUM_GPUS} \
+    ./tools/dist_test.sh ${EVAL_CONFIG} ${T2_BEST} ${NUM_GPUS} \
     --work-dir ${EVAL_DIR} \
-    --cfg-options custom_hooks.2.scpi_emb_path=${SCPI_NPY}
+    --cfg-options \
+    custom_hooks.2.scpi_emb_path=${SCPI_NPY} \
+    val_evaluator.save_rets=False \
+    test_evaluator.save_rets=False
 
 echo ""
 echo "=========================================="

@@ -34,6 +34,7 @@ class OWODDetector(YOLODetector):
                  freeze_prompt: bool = False,
                  use_mlp_adapter: bool = False,
                  wapr: dict = None,
+                 gadl: dict = None,
                  scpi: dict = None,
                  **kwargs) -> None:
         self.mm_neck = mm_neck
@@ -105,6 +106,22 @@ class OWODDetector(YOLODetector):
                   f"warmup={self.wapr.warmup_epochs} epochs, "
                   f"anchor_weight={self.wapr.anchor_loss_weight}")
 
+        # GADL: GT-Anchored Discriminative Loss (T2 only)
+        self.gadl = None
+        if gadl is not None:
+            from yolo_world.models.losses.gadl import GADLModule
+            self.gadl = GADLModule(
+                num_prev=self.num_prev_classes,
+                num_known=num_train_classes - 2,  # exclude unk and anchor
+                unk_idx=num_train_classes - 2,    # unknown is second-to-last
+                weight=gadl.get('weight', 1.0),
+            )
+            self.bbox_head.gadl = self.gadl
+            print(f"[GADL] Initialized: num_prev={self.gadl.num_prev}, "
+                  f"num_known={self.gadl.num_known}, "
+                  f"unk_idx={self.gadl.unk_idx}, "
+                  f"weight={self.gadl.weight}")
+
         # SCPI: Support-Calibrated Prompt Interpolation (training-free T2)
         self.scpi_cfg = scpi
 
@@ -127,14 +144,15 @@ class OWODDetector(YOLODetector):
             self.wapr.set_t_unk_anchor(self.embeddings[-2])
             print(f"[WAPR] T_unk anchor snapshot saved (norm={self.embeddings[-2].norm().item():.4f})")
 
-        # WAPR: set warmup flag on head (skip gatekeeper during warmup)
-        if self.wapr is not None:
+        # WAPR / GADL: set warmup flag on head (skip gatekeeper and GADL during warmup)
+        if self.wapr is not None or self.gadl is not None:
             from mmengine.logging import MessageHub
             try:
                 epoch = MessageHub.get_current_instance().get_info('epoch')
             except (KeyError, RuntimeError):
                 epoch = 0
-            self.bbox_head._wapr_in_warmup = (epoch < self.wapr.warmup_epochs)
+            warmup_epochs = self.wapr.warmup_epochs if self.wapr is not None else 0
+            self.bbox_head._wapr_in_warmup = (epoch < warmup_epochs)
 
         losses = self.bbox_head.loss(img_feats, txt_feats,
                                         batch_data_samples)
@@ -170,6 +188,17 @@ class OWODDetector(YOLODetector):
                     hub.update_scalar(k, v)
                 hub.update_scalar('wapr/warmup_active',
                                   1.0 if warmup else 0.0)
+
+        # GADL: GT-Anchored Discriminative Loss at novel GT anchor locations
+        if self.gadl is not None:
+            gadl_cls_logits = getattr(self.bbox_head, '_gadl_cls_logits', None)
+            gadl_assigned_labels = getattr(self.bbox_head, '_gadl_assigned_labels', None)
+            if gadl_cls_logits is not None and gadl_assigned_labels is not None:
+                gadl_loss = self.gadl.compute(gadl_cls_logits, gadl_assigned_labels)
+                losses['gadl_loss'] = gadl_loss
+            else:
+                # warmup epoch or first step before caching — skip silently
+                pass
 
         return losses
 

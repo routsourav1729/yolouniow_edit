@@ -1,12 +1,10 @@
-"""SCPIHook — patches model embeddings from a pre-calibrated npy file.
+"""SCPIHook — patches ONLY novel-class embeddings from a pre-calibrated npy.
 
-The heavy SCPI calibration is done offline by
-tools/owod_scripts/scpi_calibrate.py, which saves a [num_known, 512] npy.
+The T2 checkpoint is already loaded by the Runner (has correct base/unk/anchor).
+This hook ONLY overwrites novel embedding slots (indices num_prev..num_prev+num_novel-1)
+with the SCPI-calibrated values from the npy file.
 
-This hook simply:
-  1. Loads the T1 checkpoint to get base/unk/anchor embeddings
-  2. Overwrites novel embeddings from the pre-calibrated npy
-  3. Zero runtime overhead — no forward passes, no model building
+The npy is produced offline by tools/owod_scripts/scpi_calibrate.py.
 """
 import os
 
@@ -20,15 +18,21 @@ from mmyolo.registry import HOOKS
 
 @HOOKS.register_module()
 class SCPIHook(Hook):
-    """Patch embeddings from pre-calibrated SCPI npy before eval.
+    """Patch novel-class embeddings from SCPI npy before eval.
+
+    Runs at before_test_epoch with priority > 49 (after EMAHook swaps
+    EMA weights into the model).
+
+    The npy must have shape [num_known, 512] (base + novel, no unk/anchor).
+    Only the novel portion (indices num_prev:) is written into the model.
 
     Config usage::
 
         custom_hooks = [
             ...,
             dict(type='SCPIHook',
-                 scpi_emb_path='embeddings/uniow-idd/idd_t2_scpi_b10_t0.15.npy',
-                 priority=50),
+                 scpi_emb_path='embeddings/uniow-idd/idd_t2_scpi.npy',
+                 priority=51),
         ]
     """
 
@@ -38,43 +42,26 @@ class SCPIHook(Hook):
 
     def before_test_epoch(self, runner: Runner):
         if not self.scpi_emb_path or not os.path.exists(self.scpi_emb_path):
-            print(f'[SCPI] No embedding file at {self.scpi_emb_path}, skipping')
+            print(f'[SCPIHook] No embedding file at {self.scpi_emb_path}, skipping')
             return
 
         model = runner.model
         if hasattr(model, 'module'):
             model = model.module
 
-        cfg = runner.cfg
         device = model.embeddings.device
         num_prev = model.num_prev_classes
 
-        # ── Load pre-calibrated embeddings (novel only or all known) ────
         scpi_emb = torch.from_numpy(np.load(self.scpi_emb_path)).float()
-        # scpi_emb shape: [num_known, 512] — base + novel (no unk/anchor)
         num_known = scpi_emb.shape[0]
-        print(f'[SCPI] Loaded {self.scpi_emb_path}: shape={scpi_emb.shape}')
+        print(f'[SCPIHook] Loaded {self.scpi_emb_path}: shape={scpi_emb.shape}')
 
-        # ── Patch base/unk/anchor from T1 checkpoint ───────────────────
-        # Use state_dict (not EMA) — matches what Runner loads into model.
-        ckpt_path = cfg.get('load_from', '')
-        if ckpt_path and os.path.exists(ckpt_path):
-            ckpt = torch.load(ckpt_path, map_location='cpu')
-            sd = ckpt.get('state_dict', ckpt)
-            t1_emb = sd.get('embeddings', None)
+        # Extract only the novel portion from the npy
+        novel_emb = scpi_emb[num_prev:num_known]
+        num_novel = novel_emb.shape[0]
 
-            if t1_emb is not None:
-                with torch.no_grad():
-                    model.embeddings.data[:num_prev] = t1_emb[:num_prev].to(device)
-                    model.embeddings.data[-2] = t1_emb[-2].to(device)
-                    model.embeddings.data[-1] = t1_emb[-1].to(device)
-                print(f'[SCPI] Patched base/unk/anchor from {ckpt_path}')
-
-        # ── Overwrite novel embeddings from SCPI npy ───────────────────
         with torch.no_grad():
-            novel_emb = scpi_emb[num_prev:num_known]
-            num_novel = novel_emb.shape[0]
             model.embeddings.data[num_prev:num_prev + num_novel] = novel_emb.to(device)
 
-        print(f'[SCPI] Final embedding norms: {model.embeddings.data.norm(dim=-1)}')
-        print(f'[SCPI] Patched {num_novel} novel embeddings. Done.')
+        print(f'[SCPIHook] Patched novel slots {num_prev}..{num_prev + num_novel - 1}')
+        print(f'[SCPIHook] Embedding norms: {model.embeddings.data.norm(dim=-1)}')

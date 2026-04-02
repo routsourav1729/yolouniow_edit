@@ -41,6 +41,9 @@ model = dict(
         frozen_embedding_path='embeddings/uniow-idd/idd_t2.npy',
         num_known_classes=14,      # 8 base + 6 novel (IDD T2)
         warmup_epochs=1,           # reduced from 2→1: only 2.5% of training wasted
-        anchor_loss_weight=0.1,    # lambda for T_unk drift L2 loss
+        anchor_loss_weight=0.05,   # reduced from 0.1 to give GADL room
+    ),
+    gadl=dict(
+        weight=1.0,                # sweep: 0.1, 0.5, 1.0, 2.0
     ),
 )

@@ -589,6 +589,19 @@ class YOLOv10Head(BaseDenseHead):
                                                             anchor_scores,
                                                             assigned_scores[:, :, -2]) # unknown embedding score
 
+        # [GADL] Cache raw logits and GT-assigned labels for GADL loss in OWODDetector.
+        # - flatten_cls_preds: (B, N, K) raw logits WITH grad (pre-sigmoid).
+        # - assigned_labels: (B, N) GT class index per anchor, -1 for negatives.
+        # WAPR only modifies anchors where fg_mask_pre_prior==0, so argmax for
+        # positive (fg) anchors is unaffected by WAPR redistribution above.
+        if getattr(self, 'gadl', None) is not None and not getattr(self, '_wapr_in_warmup', False):
+            _gadl_raw_labels = assigned_scores.argmax(dim=-1)  # (B, N)
+            self._gadl_assigned_labels = torch.where(
+                fg_mask_pre_prior,
+                _gadl_raw_labels,
+                _gadl_raw_labels.new_full(_gadl_raw_labels.shape, -1))
+            self._gadl_cls_logits = flatten_cls_preds  # (B, N, K) with grad
+
         assigned_scores_sum = assigned_scores.sum().clamp(min=1)
         loss_cls = self.loss_cls(flatten_cls_preds, assigned_scores).sum()
         loss_cls /= assigned_scores_sum
