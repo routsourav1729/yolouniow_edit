@@ -132,3 +132,56 @@ IDD_T2_CLASS_NAMES = [
 ]
 
 VOC_COCO_CLASS_NAMES["IDD"] = tuple(itertools.chain(IDD_T1_CLASS_NAMES, IDD_T2_CLASS_NAMES, UNK_CLASS))
+
+# ---------------------------------------------------------------------------
+# FOOD VOC10-5-5 (Split 1) — Few-Shot Open-Set Detection benchmark
+# ---------------------------------------------------------------------------
+# Base (T1): 10 classes, Novel (T2): 5 classes, Unknown (eval): 5 classes
+# Order: base[0:10] + novel[10:15] + unknown_openset[15:20] + unk_pseudo[20]
+# At test time the 5 "unknown_openset" classes are relabeled as "unknown".
+FOOD_VOC_BASE_CLASSES = [
+    "aeroplane", "bicycle", "bird", "boat", "bottle",
+    "bus", "car", "cat", "chair", "cow",
+]
+FOOD_VOC_NOVEL_CLASSES = [
+    "diningtable", "dog", "horse", "motorbike", "person",
+]
+FOOD_VOC_UNKNOWN_CLASSES = [
+    "pottedplant", "sheep", "sofa", "train", "tvmonitor",
+]
+VOC_COCO_CLASS_NAMES["FOOD_VOC"] = tuple(itertools.chain(
+    FOOD_VOC_BASE_CLASSES, FOOD_VOC_NOVEL_CLASSES,
+    FOOD_VOC_UNKNOWN_CLASSES, UNK_CLASS,
+))
+
+# ---------------------------------------------------------------------------
+# FOOD VOC-COCO — Few-Shot Open-Set Detection benchmark
+# ---------------------------------------------------------------------------
+# Base (T1): 20 VOC classes, Novel (T2): 20 COCO classes,
+# Unknown (eval): 40 remaining COCO classes
+# Order: base[0:20] + novel[20:40] + unknown_openset[40:80] + unk_pseudo[80]
+FOOD_VOCCOCO_BASE_CLASSES = [
+    "aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat",
+    "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person",
+    "pottedplant", "sheep", "sofa", "train", "tvmonitor",
+]
+FOOD_VOCCOCO_NOVEL_CLASSES = [
+    "truck", "traffic light", "fire hydrant", "stop sign", "parking meter",
+    "bench", "elephant", "bear", "zebra", "giraffe",
+    "backpack", "umbrella", "handbag", "tie", "suitcase",
+    "microwave", "oven", "toaster", "sink", "refrigerator",
+]
+FOOD_VOCCOCO_UNKNOWN_CLASSES = [
+    "frisbee", "skis", "snowboard", "sports ball", "kite",
+    "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket",
+    "banana", "apple", "sandwich", "orange", "broccoli",
+    "carrot", "hot dog", "pizza", "donut", "cake",
+    "bed", "toilet", "laptop", "mouse",
+    "remote", "keyboard", "cell phone", "book", "clock",
+    "vase", "scissors", "teddy bear", "hair drier", "toothbrush",
+    "wine glass", "cup", "fork", "knife", "spoon", "bowl",
+]
+VOC_COCO_CLASS_NAMES["FOOD_VOCCOCO"] = tuple(itertools.chain(
+    FOOD_VOCCOCO_BASE_CLASSES, FOOD_VOCCOCO_NOVEL_CLASSES,
+    FOOD_VOCCOCO_UNKNOWN_CLASSES, UNK_CLASS,
+))

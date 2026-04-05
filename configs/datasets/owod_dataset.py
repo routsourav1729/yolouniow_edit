@@ -19,7 +19,19 @@ owod_settings = {
     "IDD": {
         "task_list": [0, 8, 14],
         "test_image_set": "test",
-    }
+    },
+    # FOOD VOC10-5-5 Split 1: base=10, novel=5, unknown_openset=5, unk=1
+    # 21 total classes; T1 trains base, T2 adds novel via fewshot
+    "FOOD_VOC": {
+        "task_list": [0, 10, 15],
+        "test_image_set": "test",
+    },
+    # FOOD VOC-COCO: base=20 VOC, novel=20 COCO, unknown_openset=40, unk=1
+    # 81 total classes; T1 trains base, T2 adds novel via fewshot
+    "FOOD_VOCCOCO": {
+        "task_list": [0, 20, 40],
+        "test_image_set": "test",
+    },
 }
 
 owod_root = "data/OWOD"
@@ -37,7 +49,7 @@ analyze = {{'$ANALYZE:0'}}                                                      
 # Few-shot settings (CED-FOOD / TFA style per-class filtering)
 fewshot_k = {{'$FEWSHOT_K:0'}}                                                    # k-shot (0 = disabled, 10 = 10-shot, etc.)
 fewshot_seed = {{'$FEWSHOT_SEED:1'}}                                              # seed directory index
-fewshot_dir = '{{$FEWSHOT_DIR:}}'                                                 # path to iddsplit dir (e.g. data/OWOD/iddsplit)
+fewshot_dir = '{{$FEWSHOT_DIR:data/OWOD/none}}'                                   # path to fewshot split dir (e.g. data/OWOD/iddsplit)
 
 class_text_path = f"{owod_root}/ImageSets/{owod_dataset}/t{owod_task}_known.txt"  # text inputs path for open-vocabulary model 
 test_image_set = owod_settings[owod_dataset]['test_image_set']                    # owod test image set
