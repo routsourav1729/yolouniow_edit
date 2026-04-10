@@ -1,19 +1,17 @@
 _base_ = ['yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd.py']
 
-# T2 fine-tuning: 80 epochs, 10-shot, no WAPR, no SCPI.
+# T2 fine-tuning: 40 epochs, 10-shot, no WAPR, no SCPI.
 # Load from T1 best checkpoint; base-class embeddings are frozen via
 # embedding_mask (PREV=8 frozen, CUR=6 trainable, unk+anchor trainable).
-# LR scheduler is linear decay — max_epochs=80 scales it correctly.
-# val/save every 20 epochs → checkpoints at 20, 40, 60, 80.
-max_epochs = 80
-close_mosaic_epochs = max_epochs  # mosaic disabled from start (same as base)
-save_epoch_intervals = 20
-val_interval = 20
-val_interval_stage2 = 20
+# IDD has ~60 training images, needs 40 epochs. Eval every 10.
+max_epochs = 40
+close_mosaic_epochs = max_epochs
+val_interval = 10
+val_interval_stage2 = 10
 
 default_hooks = dict(
     param_scheduler=dict(max_epochs=max_epochs),
-    checkpoint=dict(interval=save_epoch_intervals,
+    checkpoint=dict(interval=val_interval,
                     save_best=['owod/Both'],
                     rule='greater'))
 

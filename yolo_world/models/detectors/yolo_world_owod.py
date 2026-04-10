@@ -121,10 +121,16 @@ class OWODDetector(YOLODetector):
 
     def update_embeddings(self, embeddings):
         # update embeddings when loading from checkpoint
+        # Keep trained base class embeddings from checkpoint
         prev_embeddings = embeddings[:self.num_prev_classes]
         cur_embeddings = self.embeddings[self.num_prev_classes:].detach().cpu()
-        embeddings = torch.cat([prev_embeddings, cur_embeddings], dim=0)
-        return embeddings
+        result = torch.cat([prev_embeddings, cur_embeddings], dim=0)
+        # Also restore T_unk (index -2) from checkpoint — it was fine-tuned in T1
+        if embeddings.shape[0] >= 2:
+            result[-2] = embeddings[-2]
+            print(f"[update_embeddings] Restored T_unk from checkpoint "
+                  f"(norm={embeddings[-2].norm().item():.4f})")
+        return result
 
     def loss(self, batch_inputs: Tensor,
              batch_data_samples: SampleList) -> Union[dict, list]:
@@ -147,6 +153,8 @@ class OWODDetector(YOLODetector):
                 epoch = 0
             warmup_epochs = self.wapr.warmup_epochs if self.wapr is not None else 0
             self.bbox_head._wapr_in_warmup = (epoch < warmup_epochs)
+            if self.wapr is not None:
+                self.wapr._current_epoch = epoch
 
         losses = self.bbox_head.loss(img_feats, txt_feats,
                                         batch_data_samples)
@@ -167,7 +175,8 @@ class OWODDetector(YOLODetector):
                       f"candidates={wapr_stats.get('wapr/num_candidates', 0)} "
                       f"redirected={wapr_stats.get('wapr/num_redirected', 0)} "
                       f"genuine_unk={wapr_stats.get('wapr/num_genuine_unk', 0)} "
-                      f"mean_max_prob={wapr_stats.get('wapr/mean_max_prob', 0):.4f} "
+                      f"mean_ratio={wapr_stats.get('wapr/mean_ratio', 0):.4f} "
+                      f"std_ratio={wapr_stats.get('wapr/std_ratio', 0):.4f} "
                       f"mean_w_r={wapr_stats.get('wapr/mean_w_r', 0):.4f}")
             else:
                 print(f"[WAPR] epoch={epoch} "

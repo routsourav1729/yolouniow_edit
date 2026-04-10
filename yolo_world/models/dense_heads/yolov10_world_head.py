@@ -275,6 +275,8 @@ class YOLOv10WorldHeadModule(YOLOv10HeadModule):
         assert len(img_feats) == self.num_levels
         if self.training:
             self._cached_cls_logits_one2many = []
+            self._cached_cls_embeds_one2many = []
+            self._cached_txt_feats = txt_feats.detach()  # (B, K, C) for WAPR cosine sim
         txt_feats = [txt_feats for _ in range(self.num_levels)]
         return multi_apply(self.one2many_forward_single, img_feats, txt_feats,
                            self.one2many_cls_preds, self.one2many_reg_preds, self.one2many_cls_contrasts)
@@ -293,6 +295,7 @@ class YOLOv10WorldHeadModule(YOLOv10HeadModule):
         assert len(img_feats) == self.num_levels
         if self.training:
             self._cached_cls_logits_one2one = []
+            self._cached_cls_embeds_one2one = []
         txt_feats = [txt_feats for _ in range(self.num_levels)]
         return multi_apply(self.one2one_forward_single, img_feats, txt_feats,
                            self.one2one_cls_preds, self.one2one_reg_preds, self.one2one_cls_contrasts)
@@ -306,6 +309,10 @@ class YOLOv10WorldHeadModule(YOLOv10HeadModule):
         cls_logit = cls_contrast(cls_embed, txt_feat)
         if self.training:
             self._cached_cls_logits_one2many.append(cls_logit.detach())
+            # Cache BN(cls_embed) — not raw cls_embed — for WAPR cosine sim.
+            # Raw cls_embed is dominated by running_mean (SNR~3.6%), making
+            # cosine sim useless. BN centering removes the common component.
+            self._cached_cls_embeds_one2many.append(cls_contrast.norm(cls_embed).detach())
         bbox_dist_preds = reg_pred(img_feat)
         
         if self.reg_max > 1:
@@ -332,6 +339,7 @@ class YOLOv10WorldHeadModule(YOLOv10HeadModule):
         cls_logit = cls_contrast(cls_embed, txt_feat) #bkhw
         if self.training:
             self._cached_cls_logits_one2one.append(cls_logit.detach())
+            self._cached_cls_embeds_one2one.append(cls_contrast.norm(cls_embed).detach())
 
         # cls_logit[:, self.num_classes-1:self.num_classes] = torch.amax(cls_logit[:, self.num_classes-1:], dim=1, keepdim=True)
         # cls_logit = cls_logit[:, :self.num_classes]

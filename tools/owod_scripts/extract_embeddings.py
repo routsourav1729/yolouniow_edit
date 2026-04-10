@@ -1,34 +1,33 @@
 #!/usr/bin/env python3
 """
-Generic text embedding extractor for any OWOD dataset.
-Reads class names from data/OWOD/ImageSets/{dataset}/t{task}_known.txt,
-encodes them with openai/clip-vit-base-patch32 and saves to
-embeddings/uniow-{dataset_lower}/
+Text embedding extractor for OWOD datasets using the YOLO-World model backbone.
 
-Also generates 'object.npy' and 'object_tuned.npy' wildcard embeddings
-if they don't already exist in the target directory.
+Extracts class embeddings and wildcard ('object') embedding via
+model.backbone.forward_text(), matching the approach used by HONDA's
+extract_text_feats.py.  For 'object_tuned.npy', extracts the full
+embeddings tensor from a trained checkpoint's state_dict.
 
-Usage:
-    python tools/owod_scripts/extract_embeddings.py --dataset FOOD_VOC --task 1
-    python tools/owod_scripts/extract_embeddings.py --dataset FOOD_VOCCOCO --task 0  # all tasks
-    python tools/owod_scripts/extract_embeddings.py --dataset IDD --task 2
+Usage (extract class + wildcard embeddings):
+    python tools/owod_scripts/extract_embeddings.py \\
+        --config configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod.py \\
+        --ckpt pretrained/yolo_uniow_l_lora_bn_5e-4_100e_8gpus_obj365v1_goldg_train_lvis_minival.pth \\
+        --dataset FOOD_VOCCOCO --task 0
+
+Usage (extract tuned anchor embedding from trained model):
+    python tools/owod_scripts/extract_embeddings.py \\
+        --config configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod.py \\
+        --ckpt work_dirs/<run>/best*.pth \\
+        --dataset FOOD_VOCCOCO --extract_tuned
 """
-import os
 import argparse
+import glob
 import numpy as np
 import torch
 from pathlib import Path
 
-# Offline mode — compute nodes have no internet
-os.environ["HF_HOME"] = "/home/agipml/sourav.rout/ALL_FILES/hypyolo/clip_cache"
-os.environ["TRANSFORMERS_CACHE"] = "/home/agipml/sourav.rout/ALL_FILES/hypyolo/clip_cache"
-os.environ["HF_DATASETS_OFFLINE"] = "1"
-os.environ["TRANSFORMERS_OFFLINE"] = "1"
-os.environ["HF_HUB_OFFLINE"] = "1"
+from mmengine.config import Config
+from mmengine.runner import Runner
 
-from transformers import AutoTokenizer, CLIPTextModelWithProjection
-
-CLIP_MODEL = "openai/clip-vit-base-patch32"
 DATA_ROOT = Path("data/OWOD/ImageSets")
 
 # Map dataset names to embedding directory names
@@ -51,8 +50,8 @@ DATASET_TASKS = {
 
 
 @torch.inference_mode()
-def extract_task_embedding(dataset, task, save_dir, tokenizer, model, device):
-    """Extract CLIP text embeddings for a single task's known classes."""
+def extract_task_embedding(model, dataset, task, save_dir):
+    """Extract text embeddings for a single task's known classes via model backbone."""
     known_file = DATA_ROOT / dataset / f"t{task}_known.txt"
     if not known_file.exists():
         print(f"  Skipping task {task}: {known_file} not found")
@@ -60,53 +59,45 @@ def extract_task_embedding(dataset, task, save_dir, tokenizer, model, device):
 
     with open(known_file) as f:
         class_names = [line.strip() for line in f if line.strip()]
-    print(f"  Task {task}: {len(class_names)} classes → {class_names[:5]}...")
+    print(f"  Task {task}: {len(class_names)} classes -> {class_names[:5]}...")
 
-    tokens = tokenizer(text=class_names, return_tensors="pt", padding=True)
-    tokens = {k: v.to(device) for k, v in tokens.items()}
-    outputs = model(**tokens)
-    text_embeds = outputs.text_embeds
-    text_embeds = text_embeds / text_embeds.norm(p=2, dim=-1, keepdim=True)
-    text_embeds = text_embeds.cpu().float().numpy()
+    text_feats = model.backbone.forward_text([class_names]).squeeze(0).detach().cpu()
 
     save_path = save_dir / f"{dataset.lower()}_t{task}.npy"
-    np.save(save_path, text_embeds)
-    print(f"  Saved: {save_path}  shape={text_embeds.shape}")
+    np.save(save_path, text_feats.numpy())
+    print(f"  Saved: {save_path}  shape={text_feats.shape}")
 
 
 @torch.inference_mode()
-def extract_wildcard_embeddings(save_dir, tokenizer, model, device):
-    """Generate 'object' and 'object_tuned' wildcard embeddings."""
-    for name, text in [("object", "object"), ("object_tuned", "object")]:
-        save_path = save_dir / f"{name}.npy"
-        if save_path.exists():
-            print(f"  {name}.npy already exists, skipping")
-            continue
+def extract_wildcard_embedding(model, save_dir, wildcard='object'):
+    """Generate wildcard ('object') embedding via model backbone."""
+    save_path = save_dir / f"{wildcard.replace(' ', '_')}.npy"
+    text_feats = model.backbone.forward_text([[wildcard]]).squeeze(0).detach().cpu()
+    np.save(save_path, text_feats.numpy())
+    print(f"  Saved: {save_path}  shape={text_feats.shape}")
 
-        tokens = tokenizer(text=[text], return_tensors="pt", padding=True)
-        tokens = {k: v.to(device) for k, v in tokens.items()}
-        outputs = model(**tokens)
-        text_embeds = outputs.text_embeds
-        text_embeds = text_embeds / text_embeds.norm(p=2, dim=-1, keepdim=True)
-        text_embeds = text_embeds.cpu().float().numpy()
 
-        np.save(save_path, text_embeds)
-        print(f"  Saved: {save_path}  shape={text_embeds.shape}")
+def extract_tuned_embedding(ckpt, save_dir, wildcard='object'):
+    """Extract tuned embeddings from a trained model's state_dict."""
+    tuned_feats = torch.load(ckpt, map_location='cpu')['state_dict']['embeddings']
+    save_path = save_dir / f"{wildcard.replace(' ', '_')}_tuned.npy"
+    np.save(save_path, tuned_feats.numpy())
+    print(f"  Saved: {save_path}  shape={tuned_feats.shape}  norm={torch.norm(tuned_feats, dim=-1)}")
 
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--ckpt", type=str, required=True,
+                        help="Pretrained or trained checkpoint path")
     parser.add_argument("--dataset", type=str, required=True,
                         help="Dataset name (e.g., FOOD_VOC, FOOD_VOCCOCO, IDD)")
     parser.add_argument("--task", type=int, default=0,
                         help="Task number (1, 2, ...). 0 = all tasks (default)")
-    parser.add_argument("--device", type=str, default="auto",
-                        help="Device: auto/cpu/cuda")
+    parser.add_argument("--wildcard", type=str, default="object",
+                        help="Wildcard text for unknown/anchor embedding")
+    parser.add_argument("--extract_tuned", action="store_true",
+                        help="Extract tuned embedding from trained model state_dict")
     args = parser.parse_args()
-
-    device = args.device
-    if device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
 
     embed_dir_name = EMBED_DIR_MAP.get(args.dataset, f"uniow-{args.dataset.lower()}")
     save_dir = Path("embeddings") / embed_dir_name
@@ -114,19 +105,30 @@ def main():
 
     print(f"Dataset: {args.dataset}")
     print(f"Embedding dir: {save_dir}")
-    print(f"Loading CLIP text model: {CLIP_MODEL}")
-    print(f"  Cache dir: {os.environ.get('HF_HOME')}")
-    print(f"  Device: {device}")
 
-    tokenizer = AutoTokenizer.from_pretrained(CLIP_MODEL)
-    model = CLIPTextModelWithProjection.from_pretrained(CLIP_MODEL).to(device).eval()
-    print(f"  Model loaded (embed_dim={model.config.projection_dim})")
+    if args.extract_tuned:
+        extract_tuned_embedding(args.ckpt, save_dir, wildcard=args.wildcard)
+    else:
+        # Use the pretrain config (no OWOD embedding file dependencies)
+        pretrain_config = 'configs/pretrain/yolo_uniow_l_lora_bn_5e-4_100e_8gpus_obj365v1_goldg_train_lvis_minival.py'
+        cfg = Config.fromfile(pretrain_config)
+        cfg.work_dir = 'work_dirs/extract_feats'
 
-    tasks = [args.task] if args.task > 0 else DATASET_TASKS.get(args.dataset, [1, 2])
-    for task in tasks:
-        extract_task_embedding(args.dataset, task, save_dir, tokenizer, model, device)
+        runner = Runner.from_cfg(cfg)
+        runner.call_hook("before_run")
+        runner.load_checkpoint(args.ckpt, map_location='cpu')
+        model = runner.model.to('cuda')
+        model.eval()
+        print(f"  Model loaded from: {args.ckpt}")
 
-    extract_wildcard_embeddings(save_dir, tokenizer, model, device)
+        # Extract wildcard embedding
+        extract_wildcard_embedding(model, save_dir, wildcard=args.wildcard)
+
+        # Extract class embeddings for requested tasks
+        tasks = [args.task] if args.task > 0 else DATASET_TASKS.get(args.dataset, [1, 2])
+        for task in tasks:
+            extract_task_embedding(model, args.dataset, task, save_dir)
+
     print("Done!")
 
 

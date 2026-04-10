@@ -63,6 +63,18 @@ fi
 
 NUM_GPUS=${NUM_GPUS:-${SLURM_GPUS_ON_NODE:-2}}
 
+# ─── Route logs to dataset subfolder ─────────────────────────────────────────
+case "$DATASET" in
+    IDD)           _LOG_SUBDIR=slurm_logs/idd ;;
+    FOOD_VOCCOCO)  _LOG_SUBDIR=slurm_logs/voccoco ;;
+    FOOD_VOC)      _LOG_SUBDIR=slurm_logs/voc ;;
+    *)             _LOG_SUBDIR=slurm_logs/$(echo "$DATASET" | tr '[:upper:]' '[:lower:]') ;;
+esac
+mkdir -p "$_LOG_SUBDIR"
+ln -sf "../owod_l_t1_${SLURM_JOB_ID}.out" "${_LOG_SUBDIR}/owod_l_t1_${SLURM_JOB_ID}.out" 2>/dev/null || true
+ln -sf "../owod_l_t1_${SLURM_JOB_ID}.err" "${_LOG_SUBDIR}/owod_l_t1_${SLURM_JOB_ID}.err" 2>/dev/null || true
+echo "[Log] ${_LOG_SUBDIR}/owod_l_t1_${SLURM_JOB_ID}.{out,err}"
+
 # ─── Dataset-specific configuration ──────────────────────────────────────────
 STEM=yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod
 PRETRAINED_CKPT=${PRETRAINED_OVERRIDE:-pretrained/yolo_uniow_l_lora_bn_5e-4_100e_8gpus_obj365v1_goldg_train_lvis_minival.pth}

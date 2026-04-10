@@ -72,13 +72,31 @@ fi
 
 NUM_GPUS=${NUM_GPUS:-${SLURM_GPUS_ON_NODE:-1}}
 
+# ─── Route logs to dataset subfolder ─────────────────────────────────────────
+case "$DATASET" in
+    IDD)           _LOG_SUBDIR=slurm_logs/idd ;;
+    FOOD_VOCCOCO)  _LOG_SUBDIR=slurm_logs/voccoco ;;
+    FOOD_VOC)      _LOG_SUBDIR=slurm_logs/voc ;;
+    *)             _LOG_SUBDIR=slurm_logs/$(echo "$DATASET" | tr '[:upper:]' '[:lower:]') ;;
+esac
+mkdir -p "$_LOG_SUBDIR"
+ln -sf "../owod_l_t2_${SLURM_JOB_ID}.out" "${_LOG_SUBDIR}/owod_l_t2_${SLURM_JOB_ID}.out" 2>/dev/null || true
+ln -sf "../owod_l_t2_${SLURM_JOB_ID}.err" "${_LOG_SUBDIR}/owod_l_t2_${SLURM_JOB_ID}.err" 2>/dev/null || true
+echo "[Log] ${_LOG_SUBDIR}/owod_l_t2_${SLURM_JOB_ID}.{out,err}"
+
 # ─── Dataset-specific configuration ──────────────────────────────────────────
 STEM=yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod
 DATASET_LOWER=$(echo "$DATASET" | tr '[:upper:]' '[:lower:]')
 
 case $DATASET in
     IDD)
-        CONFIG=${CONFIG_OVERRIDE:-configs/owod_ft/${STEM}_idd_wapr.py}
+        if [ -n "$CONFIG_OVERRIDE" ]; then
+            CONFIG="$CONFIG_OVERRIDE"
+        elif [ "$USE_WAPR" -eq 1 ]; then
+            CONFIG=configs/owod_ft/${STEM}_idd_wapr.py
+        else
+            CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2.py
+        fi
         EMBED_DIR=embeddings/uniow-idd
         EMBED_PREFIX=idd
         FEWSHOT_DIR=data/OWOD/iddsplit

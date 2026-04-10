@@ -1,8 +1,22 @@
 _base_ = ['yolo_uniow_l_lora_bn_1e-3_80e_8gpus_owod_food_voccoco_t2.py']
 
 # FOOD VOC-COCO — T2 WAPR config.
-# Keep the same 80-epoch schedule as the plain T2 run and only enable
-# WAPR-specific pseudo-label redistribution plus T_unk anchoring.
+# 20-epoch schedule (model peaks around ep10, overfits beyond ep20).
+# Evaluate every 5 epochs to track the curve.
+max_epochs = 20
+close_mosaic_epochs = max_epochs
+val_interval = 5
+val_interval_stage2 = 5
+
+train_cfg = dict(max_epochs=max_epochs,
+                 val_interval=val_interval,
+                 dynamic_intervals=[((max_epochs - close_mosaic_epochs),
+                                     val_interval_stage2)])
+
+default_hooks = dict(
+    param_scheduler=dict(max_epochs=max_epochs),
+    checkpoint=dict(interval=5, save_best=['owod/Both'], rule='greater'))
+
 model = dict(
     wapr=dict(
         frozen_embedding_path='embeddings/uniow-food-voccoco/food_voccoco_t2.npy',
