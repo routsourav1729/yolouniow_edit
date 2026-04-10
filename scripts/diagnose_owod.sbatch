@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=diag_owod
-#SBATCH --output=slurm_logs/diag_%j.out
-#SBATCH --error=slurm_logs/diag_%j.err
+#SBATCH --output=slurm_logs/analysis/diag_%j.out
+#SBATCH --error=slurm_logs/analysis/diag_%j.err
 #SBATCH --partition=l40
 #SBATCH --qos=l40
 #SBATCH --nodes=1
@@ -9,7 +9,7 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
 #SBATCH --mem=128G
-#SBATCH --time=01:00:00
+#SBATCH --time=06:00:00
 
 # ============================================================================
 # Universal OWOD Diagnostic
@@ -42,14 +42,14 @@ export TOKENIZERS_PARALLELISM=false
 export PYTHONUNBUFFERED=1
 
 cd /home/agipml/sourav.rout/ALL_FILES/hypyolo/YOLO-UniOW
-mkdir -p slurm_logs/{idd,voccoco,voc}
+mkdir -p slurm_logs/{idd,voccoco,voc,analysis}
 
 # ─── Parse arguments ──────────────────────────────────────────────────────
 DATASET="IDD"
 TASK=2
 CKPT=""
 CONFIG=""
-NUM_IMAGES=50
+NUM_IMAGES=0
 T1_ON_T2=0
 
 while [[ $# -gt 0 ]]; do
@@ -143,8 +143,8 @@ if [ -z "$CKPT" ] || [ ! -f "$CKPT" ]; then
 fi
 
 # Symlink logs to dataset-specific dir
-ln -sf "$(pwd)/slurm_logs/diag_${SLURM_JOB_ID}.out" "${LOG_DIR}/diag_${SLURM_JOB_ID}.out" 2>/dev/null
-ln -sf "$(pwd)/slurm_logs/diag_${SLURM_JOB_ID}.err" "${LOG_DIR}/diag_${SLURM_JOB_ID}.err" 2>/dev/null
+ln -sf "$(pwd)/slurm_logs/analysis/diag_${SLURM_JOB_ID}.out" "${LOG_DIR}/diag_${SLURM_JOB_ID}.out" 2>/dev/null
+ln -sf "$(pwd)/slurm_logs/analysis/diag_${SLURM_JOB_ID}.err" "${LOG_DIR}/diag_${SLURM_JOB_ID}.err" 2>/dev/null
 
 # Set env vars for the config
 export THRESHOLD=0.05
@@ -165,9 +165,20 @@ echo "  T1-on-T2:   $T1_ON_T2"
 echo "  Log dir:    $LOG_DIR"
 echo "=========================================="
 
+# Auto-detect T1 checkpoint
+T1_CKPT=$(ls -t ${T1_CKPT_DIR}/best*.pth 2>/dev/null | head -1)
+T1_FLAG=""
+if [ -n "$T1_CKPT" ] && [ -f "$T1_CKPT" ]; then
+    T1_FLAG="--t1-checkpoint $T1_CKPT"
+    echo "  T1 Ckpt:    $T1_CKPT"
+else
+    echo "  T1 Ckpt:    (not found, skipping visual centroid)"
+fi
+
 python tools/diagnose_owod.py \
     --config "$CONFIG" \
     --checkpoint "$CKPT" \
+    $T1_FLAG \
     --num-images "$NUM_IMAGES"
 
 echo ""

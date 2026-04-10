@@ -99,8 +99,8 @@ def parse_args():
     p.add_argument('--checkpoint', required=True, help='T2 checkpoint .pth')
     p.add_argument('--t1-checkpoint', default='',
                    help='T1 checkpoint (for visual centroid analysis)')
-    p.add_argument('--num-images', type=int, default=50,
-                   help='Number of val images to process')
+    p.add_argument('--num-images', type=int, default=0,
+                   help='Number of val images (0=all)')
     return p.parse_args()
 
 
@@ -206,31 +206,41 @@ def extract_at_box(hooked, bbox_scaled, use_bn=True):
 
 
 def load_and_preprocess_image(img_path, pipeline):
-    """Load image, run pipeline, return (tensor_cuda, scale_factor, pad_param)."""
+    """Load image, run pipeline, return (tensor, data_sample, scale_factor, pad_param)."""
     data = dict(img_path=img_path,
                 img_id=os.path.basename(img_path).replace('.jpg', ''),
                 instances=[])
     data = pipeline(data)
     img_tensor = data['inputs'].unsqueeze(0).float().cuda() / 255.0
-    meta = data['data_samples'].metainfo
+    data_sample = data['data_samples']
+    meta = data_sample.metainfo
     scale_factor = np.array(meta.get('scale_factor', [1.0, 1.0]))
-    pad_param = meta.get('pad_param', (0, 0, 0, 0))
-    return img_tensor, scale_factor, pad_param
+    pad_param = meta.get('pad_param', np.zeros(4, dtype=np.float32))
+    return img_tensor, data_sample, scale_factor, pad_param
 
 
 def scale_box(bbox, scale_factor, pad_param):
-    """Map original box to resized+padded coords."""
-    return (bbox[0] * scale_factor[1] + pad_param[2],
-            bbox[1] * scale_factor[0] + pad_param[0],
-            bbox[2] * scale_factor[1] + pad_param[2],
-            bbox[3] * scale_factor[0] + pad_param[0])
+    """Map original box to resized+padded coords.
+    scale_factor = (w_scale, h_scale), pad_param = [top, bottom, left, right]."""
+    return (bbox[0] * scale_factor[0] + pad_param[2],
+            bbox[1] * scale_factor[1] + pad_param[0],
+            bbox[2] * scale_factor[0] + pad_param[2],
+            bbox[3] * scale_factor[1] + pad_param[0])
 
 
 def build_image_pipeline(cfg):
     """Build image transform pipeline from config, skip annotation loading."""
     from mmengine.dataset import Compose
+    # Pipeline may be at dataset level or dataset.dataset level
+    vd = cfg.val_dataloader.dataset
+    if hasattr(vd, 'pipeline'):
+        raw_pipeline = vd.pipeline
+    elif hasattr(vd, 'dataset') and hasattr(vd.dataset, 'pipeline'):
+        raw_pipeline = vd.dataset.pipeline
+    else:
+        raise ValueError("Cannot find pipeline in val_dataloader config")
     img_pipeline_cfg = []
-    for t in cfg.val_dataloader.dataset.dataset.pipeline:
+    for t in raw_pipeline:
         t_type = t.get('type', '')
         if 'LoadAnnotations' in t_type or 'PackDetInputs' in t_type:
             continue
@@ -242,11 +252,10 @@ def build_image_pipeline(cfg):
     return Compose(img_pipeline_cfg)
 
 
-def trigger_hooks(head, img_feats, txt_feats):
-    """Fire forward through all FPN levels to populate hooks."""
-    for lvl_idx, feat in enumerate(img_feats):
-        ce = head.one2many_cls_preds[lvl_idx](feat)
-        head.one2many_cls_contrasts[lvl_idx](ce, txt_feats)
+def trigger_hooks(model, img_tensor, data_sample):
+    """Run extract_feat + forward_one2many to populate hooks."""
+    img_feats, txt_feats = model.extract_feat(img_tensor, [data_sample])
+    model.bbox_head.head_module.forward_one2many(img_feats, txt_feats)
 
 
 def analyze_embeddings(dataset_key, task):
@@ -311,10 +320,10 @@ def run_forward_diagnostics(model, cfg, dataset_key, task, n_imgs):
     n_novel = len(info['t2_novel']) if task >= 2 else 0
     n_known = n_base + n_novel
 
-    txt_feats = model.embeddings[None].cuda()
     print(f"\n{'='*70}")
     print(f"MODEL FORWARD DIAGNOSTICS — {dataset_key} T{task}")
     print(f"{'='*70}")
+    txt_feats = model.embeddings[None].cuda()
     print(f"  Embeddings shape: {txt_feats.shape}")
     norms = txt_feats[0].norm(dim=-1)
     print(f"  Embed norms: known=[{norms[:n_known].min():.3f}, {norms[:n_known].max():.3f}]"
@@ -322,7 +331,7 @@ def run_forward_diagnostics(model, cfg, dataset_key, task, n_imgs):
 
     val_dataset = DATASETS.build(cfg.val_dataloader.dataset)
     head = model.bbox_head.head_module
-    n_imgs = min(n_imgs, len(val_dataset))
+    n_imgs = len(val_dataset) if n_imgs <= 0 else min(n_imgs, len(val_dataset))
 
     bn_layer = head.one2many_cls_contrasts[0].norm
     rmean = bn_layer.running_mean
@@ -350,9 +359,8 @@ def run_forward_diagnostics(model, cfg, dataset_key, task, n_imgs):
                 batch_inputs = torch.stack(batch_inputs)
             batch_inputs = batch_inputs.float().cuda()
 
-            img_feats = model.backbone(batch_inputs)
-            if model.with_neck:
-                img_feats = model.neck(img_feats)
+            img_feats, txt_feats = model.extract_feat(
+                batch_inputs, batch['data_samples'])
 
             for lvl_idx, img_feat in enumerate(img_feats):
                 cls_embed = head.one2many_cls_preds[lvl_idx](img_feat)
@@ -390,9 +398,10 @@ def run_forward_diagnostics(model, cfg, dataset_key, task, n_imgs):
     for name, vals in [('max_known', max_known_all),
                        ('anchor', anchor_all),
                        ('T_unk', unk_all)]:
-        print(f"  {name:12s}: mean={vals.mean():.6f} std={vals.std():.6f} "
-              f"p50={vals.quantile(0.5):.6f} p95={vals.quantile(0.95):.6f} "
-              f"p99={vals.quantile(0.99):.6f}")
+        v = vals.numpy()
+        print(f"  {name:12s}: mean={v.mean():.6f} std={v.std():.6f} "
+              f"p50={np.percentile(v, 50):.6f} p95={np.percentile(v, 95):.6f} "
+              f"p99={np.percentile(v, 99):.6f}")
 
     if gk_anchor:
         gk_mk = torch.cat(gk_max_known)
@@ -410,10 +419,11 @@ def run_forward_diagnostics(model, cfg, dataset_key, task, n_imgs):
 
         ratio = gk_mk / gk_an.clamp(min=1e-8)
         w_r = (1.0 - ratio).clamp(0, 1)
+        r = ratio.numpy()
         print(f"\n  Score ratio (max_known/anchor):")
-        print(f"    mean={ratio.mean():.4f} std={ratio.std():.4f}")
-        print(f"    p25={ratio.quantile(0.25):.4f} p50={ratio.quantile(0.5):.4f} "
-              f"p75={ratio.quantile(0.75):.4f} p95={ratio.quantile(0.95):.4f}")
+        print(f"    mean={r.mean():.4f} std={r.std():.4f}")
+        print(f"    p25={np.percentile(r, 25):.4f} p50={np.percentile(r, 50):.4f} "
+              f"p75={np.percentile(r, 75):.4f} p95={np.percentile(r, 95):.4f}")
         print(f"  w_r = 1 - ratio:")
         print(f"    mean={w_r.mean():.4f} std={w_r.std():.4f}")
 
@@ -500,8 +510,6 @@ def section_visual_centroid(args, cfg, dataset_key, task, pipeline):
     print(f"  Loading T1 model: {args.t1_checkpoint}")
     t1_model = build_model(cfg, args.t1_checkpoint)
     hooked, handles = setup_hooks(t1_model.bbox_head.head_module)
-    head = t1_model.bbox_head.head_module
-    txt_feats = t1_model.embeddings[None].cuda()
 
     visual_centroids = {}
     with torch.no_grad():
@@ -511,12 +519,9 @@ def section_visual_centroid(args, cfg, dataset_key, task, pipeline):
                 continue
             feats = []
             for img_path, boxes in class_images[cls_name]:
-                img_tensor, sf, pp = load_and_preprocess_image(
+                img_tensor, ds, sf, pp = load_and_preprocess_image(
                     img_path, pipeline)
-                img_feats = t1_model.backbone(img_tensor)
-                if t1_model.with_neck:
-                    img_feats = t1_model.neck(img_feats)
-                trigger_hooks(head, img_feats, txt_feats)
+                trigger_hooks(t1_model, img_tensor, ds)
                 for box in boxes:
                     sb = scale_box(box, sf, pp)
                     feat_vec, _ = extract_at_box(hooked, sb, use_bn=True)
@@ -626,18 +631,18 @@ def section_score_margin(model, hooked, pipeline, dataset_key, task, n_imgs):
     test_set_file = f"data/OWOD/ImageSets/{info['ann_dataset']}/test.txt"
     with open(test_set_file) as f:
         all_img_ids = [x.strip() for x in f if x.strip()]
-    rng = np.random.RandomState(42)
-    img_ids = list(rng.choice(all_img_ids,
-                              min(n_imgs, len(all_img_ids)),
-                              replace=False))
+    if n_imgs > 0:
+        rng = np.random.RandomState(42)
+        img_ids = list(rng.choice(all_img_ids,
+                                  min(n_imgs, len(all_img_ids)),
+                                  replace=False))
+    else:
+        img_ids = all_img_ids
 
     unk_gt_records = []
     novel_gt_records = []
     base_gt_records = []
     cls_to_idx = {c: i for i, c in enumerate(all_classes)}
-
-    head = model.bbox_head.head_module
-    txt_feats = model.embeddings[None].cuda()
 
     print(f"\n{'='*70}")
     print(f"SCORE MARGIN AT GT LOCATIONS — {dataset_key} T{task}")
@@ -655,11 +660,8 @@ def section_score_margin(model, hooked, pipeline, dataset_key, task, n_imgs):
             if not objs:
                 continue
 
-            img_tensor, sf, pp = load_and_preprocess_image(img_path, pipeline)
-            img_feats = model.backbone(img_tensor)
-            if model.with_neck:
-                img_feats = model.neck(img_feats)
-            trigger_hooks(head, img_feats, txt_feats)
+            img_tensor, ds, sf, pp = load_and_preprocess_image(img_path, pipeline)
+            trigger_hooks(model, img_tensor, ds)
 
             for obj in objs:
                 name, bbox = obj['name'], obj['bbox']
@@ -795,14 +797,15 @@ def section_feature_compactness(model, hooked, pipeline, dataset_key,
     test_set_file = f"data/OWOD/ImageSets/{info['ann_dataset']}/test.txt"
     with open(test_set_file) as f:
         all_img_ids = [x.strip() for x in f if x.strip()]
-    rng = np.random.RandomState(42)
-    img_ids = list(rng.choice(all_img_ids,
-                              min(n_imgs, len(all_img_ids)),
-                              replace=False))
+    if n_imgs > 0:
+        rng = np.random.RandomState(42)
+        img_ids = list(rng.choice(all_img_ids,
+                                  min(n_imgs, len(all_img_ids)),
+                                  replace=False))
+    else:
+        img_ids = all_img_ids
 
     class_feats = defaultdict(list)
-    head = model.bbox_head.head_module
-    txt_feats = model.embeddings[None].cuda()
 
     print(f"\n{'='*70}")
     print(f"NOVEL CLASS FEATURE COMPACTNESS — {dataset_key} T{task}")
@@ -819,11 +822,8 @@ def section_feature_compactness(model, hooked, pipeline, dataset_key,
             if not objs:
                 continue
 
-            img_tensor, sf, pp = load_and_preprocess_image(img_path, pipeline)
-            img_feats = model.backbone(img_tensor)
-            if model.with_neck:
-                img_feats = model.neck(img_feats)
-            trigger_hooks(head, img_feats, txt_feats)
+            img_tensor, ds, sf, pp = load_and_preprocess_image(img_path, pipeline)
+            trigger_hooks(model, img_tensor, ds)
 
             for obj in objs:
                 if obj['name'] not in known_set:
@@ -862,6 +862,183 @@ def section_feature_compactness(model, hooked, pipeline, dataset_key,
         cos_cp = cosine_sim(centroid, t2_prompts[cls_idx])
         print(f"  {cls_name:25s} | {cls_type:>5s} | {n:4d} | "
               f"{intra_cos:9.4f} | {cos_cp:16.4f}")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Section 7: GRADIENT SIGNAL ANALYSIS AT GT LOCATIONS
+# ══════════════════════════════════════════════════════════════════════════
+
+def section_gradient_signal(model, hooked, pipeline, dataset_key, task,
+                            n_imgs):
+    """Analytical gradient magnitude at GT box locations for novel classes."""
+    if task < 2:
+        return
+
+    info = DATASET_INFO[dataset_key]
+    n_base = len(info['t1_classes'])
+    n_novel = len(info['t2_novel'])
+    n_known = n_base + n_novel
+    all_classes = info['t1_classes'] + info['t2_novel']
+    novel_class_names = set(info['t2_novel'])
+    cls_to_idx = {c: i for i, c in enumerate(all_classes)}
+
+    ann_dir = f"data/OWOD/Annotations/{info['ann_dataset']}"
+    img_dir = f"data/OWOD/JPEGImages/{info['ann_dataset']}"
+
+    test_set_file = f"data/OWOD/ImageSets/{info['ann_dataset']}/test.txt"
+    with open(test_set_file) as f:
+        all_img_ids = [x.strip() for x in f if x.strip()]
+    if n_imgs > 0:
+        rng = np.random.RandomState(42)
+        img_ids = list(rng.choice(all_img_ids,
+                                  min(n_imgs, len(all_img_ids)),
+                                  replace=False))
+    else:
+        img_ids = all_img_ids
+
+    # Get logit_scale from BNContrastiveHead (same across levels)
+    contrast_head = model.bbox_head.head_module.one2many_cls_contrasts[0]
+    logit_scale_val = contrast_head.logit_scale.exp().item()
+    bias_val = contrast_head.bias.item()
+
+    # T_unk index is second-to-last in embedding
+    unk_idx = model.embeddings.shape[0] - 2
+
+    # Per-class accumulators
+    # For each novel class: list of (pos_grad, mean_neg_known, neg_unk, worst_cls_idx)
+    class_records = defaultdict(list)
+
+    print(f"\n{'='*70}")
+    print(f"GRADIENT SIGNAL ANALYSIS AT GT LOCATIONS — {dataset_key} T{task}")
+    print(f"{'='*70}")
+    print(f"  logit_scale = exp({contrast_head.logit_scale.item():.4f}) "
+          f"= {logit_scale_val:.4f},  bias = {bias_val:.4f}")
+    print(f"  Processing {len(img_ids)} val images...")
+
+    with torch.no_grad():
+        for idx, img_id in enumerate(img_ids):
+            xml_path = os.path.join(ann_dir, img_id + '.xml')
+            img_path = os.path.join(img_dir, img_id + '.jpg')
+            if not os.path.exists(xml_path) or not os.path.exists(img_path):
+                continue
+
+            objs = parse_voc_xml(xml_path)
+            if not objs:
+                continue
+
+            # Only process if there are novel GT boxes in this image
+            has_novel = any(o['name'] in novel_class_names for o in objs)
+            if not has_novel:
+                continue
+
+            img_tensor, ds, sf, pp = load_and_preprocess_image(
+                img_path, pipeline)
+            trigger_hooks(model, img_tensor, ds)
+
+            for obj in objs:
+                name = obj['name']
+                if name not in novel_class_names:
+                    continue
+
+                gt_idx = cls_to_idx.get(name, -1)
+                if gt_idx < 0:
+                    continue
+
+                sb = scale_box(obj['bbox'], sf, pp)
+                feat_vec, logit_vec = extract_at_box(hooked, sb, use_bn=True)
+                if feat_vec is None or logit_vec is None:
+                    continue
+
+                bn_norm = feat_vec.norm().item()
+                probs = logit_vec.sigmoid()
+
+                # Positive gradient: for correct class
+                pos_grad = (1.0 - probs[gt_idx].item()) * logit_scale_val * bn_norm
+
+                # Negative gradient: for each wrong known class
+                neg_grads_known = []
+                worst_neg = 0.0
+                worst_cls = -1
+                for j in range(n_known):
+                    if j == gt_idx:
+                        continue
+                    ng = probs[j].item() * logit_scale_val * bn_norm
+                    neg_grads_known.append(ng)
+                    if ng > worst_neg:
+                        worst_neg = ng
+                        worst_cls = j
+
+                mean_neg_known = (sum(neg_grads_known) / len(neg_grads_known)
+                                  if neg_grads_known else 0.0)
+
+                # T_unk negative gradient
+                neg_unk = probs[unk_idx].item() * logit_scale_val * bn_norm
+
+                class_records[name].append(dict(
+                    pos_grad=pos_grad,
+                    mean_neg_known=mean_neg_known,
+                    neg_unk=neg_unk,
+                    worst_cls=worst_cls,
+                ))
+
+            if (idx + 1) % 100 == 0:
+                print(f"    ... {idx+1}/{len(img_ids)}")
+
+    # Print table
+    print(f"\n  {'Class':25s} | {'n_gt':>5s} | {'pos_grad':>10s} | "
+          f"{'neg_known':>10s} | {'neg_unk':>10s} | {'ratio':>7s} | "
+          f"{'max_neg_class':>20s}")
+    print(f"  {'-'*25}-+-{'-'*5}-+-{'-'*10}-+-{'-'*10}-+-"
+          f"{'-'*10}-+-{'-'*7}-+-{'-'*20}")
+
+    all_pos = []
+    all_neg_known = []
+    all_neg_unk = []
+
+    for cls_name in info['t2_novel']:
+        recs = class_records.get(cls_name, [])
+        n = len(recs)
+        if n == 0:
+            print(f"  {cls_name:25s} | {0:5d} | {'N/A':>10s} | "
+                  f"{'N/A':>10s} | {'N/A':>10s} | {'N/A':>7s} | "
+                  f"{'N/A':>20s}")
+            continue
+
+        mp = np.mean([r['pos_grad'] for r in recs])
+        mn = np.mean([r['mean_neg_known'] for r in recs])
+        mu = np.mean([r['neg_unk'] for r in recs])
+        ratio = mn / mp if mp > 1e-8 else float('inf')
+
+        all_pos.extend(r['pos_grad'] for r in recs)
+        all_neg_known.extend(r['mean_neg_known'] for r in recs)
+        all_neg_unk.extend(r['neg_unk'] for r in recs)
+
+        # Find most common worst class
+        worst_counts = defaultdict(int)
+        for r in recs:
+            if r['worst_cls'] >= 0:
+                worst_counts[r['worst_cls']] += 1
+        if worst_counts:
+            wc = max(worst_counts, key=worst_counts.get)
+            worst_name = (all_classes[wc] if wc < len(all_classes)
+                          else f"cls_{wc}")
+        else:
+            worst_name = "N/A"
+
+        print(f"  {cls_name:25s} | {n:5d} | {mp:10.4f} | "
+              f"{mn:10.4f} | {mu:10.4f} | {ratio:7.4f} | "
+              f"{worst_name:>20s}")
+
+    if all_pos:
+        total_pos = np.mean(all_pos)
+        total_neg = np.mean(all_neg_known)
+        total_unk = np.mean(all_neg_unk)
+        total_ratio = total_neg / total_pos if total_pos > 1e-8 else float('inf')
+        print(f"\n  Summary across all novel GT boxes ({len(all_pos)} total):")
+        print(f"    positive grad  = {total_pos:.4f}")
+        print(f"    negative grad  = {total_neg:.4f}")
+        print(f"    neg_unk grad   = {total_unk:.4f}")
+        print(f"    ratio(neg/pos) = {total_ratio:.4f}")
 
 
 def main():
@@ -920,6 +1097,11 @@ def main():
 
     # Phase 6: Feature compactness
     section_feature_compactness(model, hooked, pipeline,
+                                dataset_key, task, args.num_images)
+
+    # Phase 7: Gradient signal analysis
+    if task >= 2:
+        section_gradient_signal(model, hooked, pipeline,
                                 dataset_key, task, args.num_images)
 
     remove_hooks(handles)
