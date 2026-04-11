@@ -296,6 +296,8 @@ class YOLOv10WorldHeadModule(YOLOv10HeadModule):
         if self.training:
             self._cached_cls_logits_one2one = []
             self._cached_cls_embeds_one2one = []
+            if getattr(self, '_cache_gasdl_logits', False):
+                self._gasdl_cls_logits_one2one = []
         txt_feats = [txt_feats for _ in range(self.num_levels)]
         return multi_apply(self.one2one_forward_single, img_feats, txt_feats,
                            self.one2one_cls_preds, self.one2one_reg_preds, self.one2one_cls_contrasts)
@@ -340,6 +342,8 @@ class YOLOv10WorldHeadModule(YOLOv10HeadModule):
         if self.training:
             self._cached_cls_logits_one2one.append(cls_logit.detach())
             self._cached_cls_embeds_one2one.append(cls_contrast.norm(cls_embed).detach())
+            if getattr(self, '_cache_gasdl_logits', False):
+                self._gasdl_cls_logits_one2one.append(cls_logit)  # with grad
 
         # cls_logit[:, self.num_classes-1:self.num_classes] = torch.amax(cls_logit[:, self.num_classes-1:], dim=1, keepdim=True)
         # cls_logit = cls_logit[:, :self.num_classes]
