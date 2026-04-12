@@ -32,8 +32,6 @@ class OWODDetector(YOLODetector):
                  use_mlp_adapter: bool = False,
                  wapr: dict = None,
                  gadl: dict = None,
-                 concept_negation: dict = None,
-                 gasdl: dict = None,
                  **kwargs) -> None:
         self.mm_neck = mm_neck
         self.num_training_classes = num_train_classes
@@ -104,7 +102,7 @@ class OWODDetector(YOLODetector):
                   f"warmup={self.wapr.warmup_epochs} epochs, "
                   f"anchor_weight={self.wapr.anchor_loss_weight}")
 
-        # GADL: GT-Anchored Discriminative Loss (T2 only) — legacy
+        # GADL: GT-Anchored Discriminative Loss (T2 only)
         self.gadl = None
         if gadl is not None:
             from yolo_world.models.losses.gadl import GADLModule
@@ -120,33 +118,6 @@ class OWODDetector(YOLODetector):
                   f"unk_idx={self.gadl.unk_idx}, "
                   f"weight={self.gadl.weight}")
 
-        # ConceptNegation: one-time T_unk decontamination (T2 only)
-        self._concept_negation = None
-        self._concept_negation_done = False
-        if concept_negation is not None:
-            from yolo_world.models.losses.concept_negation import ConceptNegation
-            self._concept_negation = ConceptNegation(
-                alpha=concept_negation.get('alpha', 1.0),
-            )
-            print(f"[ConceptNegation] Initialized: alpha={self._concept_negation.alpha}")
-
-        # GASDL: GT-Anchored Softmax Discriminative Loss (T2 only, replaces GADL)
-        self.gasdl = None
-        if gasdl is not None:
-            from yolo_world.models.losses.gasdl import GASDLModule
-            self.gasdl = GASDLModule(
-                num_prev=self.num_prev_classes,
-                num_known=num_train_classes - 2,
-                unk_idx=num_train_classes - 2,
-                weight=gasdl.get('weight', 1.0),
-                temperature=gasdl.get('temperature', 5.0),
-                include_unknown=gasdl.get('include_unknown', True),
-            )
-            self.bbox_head._cache_gasdl_logits = True
-            print(f"[GASDL] Initialized: num_prev={self.gasdl.num_prev}, "
-                  f"num_known={self.gasdl.num_known}, "
-                  f"weight={self.gasdl.weight}, "
-                  f"temp={self.gasdl.temperature.item():.2f}")
 
 
     def update_embeddings(self, embeddings):
@@ -169,17 +140,10 @@ class OWODDetector(YOLODetector):
         img_feats, txt_feats = self.extract_feat(batch_inputs,
                                                  batch_data_samples)
 
-        # WAPR: snapshot T_unk anchor on first call (after T1 checkpoint load)
+        # WAPR: snapshot T_unk anchor on first call
         if self.wapr is not None and self.wapr.t_unk_anchor is None:
             self.wapr.set_t_unk_anchor(self.embeddings[-2])
             print(f"[WAPR] T_unk anchor snapshot saved (norm={self.embeddings[-2].norm().item():.4f})")
-
-        # ConceptNegation: one-time T_unk decontamination (runs once)
-        if self._concept_negation is not None and not self._concept_negation_done:
-            num_known = self.num_training_classes - 2
-            novel_embs = self.embeddings[self.num_prev_classes:num_known]
-            self._concept_negation.refine(self.embeddings[-2], novel_embs)
-            self._concept_negation_done = True
 
         # WAPR / GADL: set warmup flag on head (skip gatekeeper and GADL during warmup)
         if self.wapr is not None or self.gadl is not None:
@@ -239,13 +203,6 @@ class OWODDetector(YOLODetector):
             else:
                 # warmup epoch or first step before caching — skip silently
                 pass
-
-        # GASDL: GT-Anchored Softmax Discriminative Loss at raw GT box centers
-        if self.gasdl is not None:
-            gasdl_logits = getattr(self.bbox_head, '_gasdl_cls_logits_one2one', None)
-            if gasdl_logits is not None and len(gasdl_logits) > 0:
-                gasdl_loss = self.gasdl.compute(gasdl_logits, batch_data_samples)
-                losses['gasdl_loss'] = gasdl_loss
 
         return losses
 

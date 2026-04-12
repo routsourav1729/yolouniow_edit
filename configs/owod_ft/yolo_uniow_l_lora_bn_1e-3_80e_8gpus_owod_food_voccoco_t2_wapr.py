@@ -24,12 +24,4 @@ model = dict(
         warmup_epochs=1,
         anchor_loss_weight=0.05,
     ),
-    concept_negation=dict(
-        alpha=1.0,
-    ),
-    gasdl=dict(
-        weight=1.0,
-        temperature=5.0,
-        include_unknown=True,
-    ),
 )
