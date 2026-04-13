@@ -78,11 +78,17 @@ def extract_wildcard_embedding(model, save_dir, wildcard='object'):
 
 
 def extract_tuned_embedding(ckpt, save_dir, wildcard='object'):
-    """Extract tuned embeddings from a trained model's state_dict."""
-    tuned_feats = torch.load(ckpt, map_location='cpu')['state_dict']['embeddings']
+    """Extract the T_anchor (last) embedding row from a trained model's state_dict.
+
+    The saved file must be shape (1, 512) — it is concatenated as the anchor
+    embedding in training via anchor_embedding_path.  Saving the full (K+2, 512)
+    matrix would cause a dimension mismatch at training time.
+    """
+    all_embs = torch.load(ckpt, map_location='cpu')['state_dict']['embeddings']
+    tuned_feats = all_embs[-1:]  # T_anchor is the last row, shape (1, C)
     save_path = save_dir / f"{wildcard.replace(' ', '_')}_tuned.npy"
     np.save(save_path, tuned_feats.numpy())
-    print(f"  Saved: {save_path}  shape={tuned_feats.shape}  norm={torch.norm(tuned_feats, dim=-1)}")
+    print(f"  Saved: {save_path}  shape={tuned_feats.shape}  norm={torch.norm(tuned_feats, dim=-1).item():.4f}")
 
 
 def main():
