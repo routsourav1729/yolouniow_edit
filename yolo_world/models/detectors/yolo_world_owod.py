@@ -154,8 +154,6 @@ class OWODDetector(YOLODetector):
                 epoch = 0
             warmup_epochs = self.wapr.warmup_epochs if self.wapr is not None else 0
             self.bbox_head._wapr_in_warmup = (epoch < warmup_epochs)
-            if self.wapr is not None:
-                self.wapr._current_epoch = epoch
 
         losses = self.bbox_head.loss(img_feats, txt_feats,
                                         batch_data_samples)
@@ -176,8 +174,7 @@ class OWODDetector(YOLODetector):
                       f"candidates={wapr_stats.get('wapr/num_candidates', 0)} "
                       f"redirected={wapr_stats.get('wapr/num_redirected', 0)} "
                       f"genuine_unk={wapr_stats.get('wapr/num_genuine_unk', 0)} "
-                      f"mean_ratio={wapr_stats.get('wapr/mean_ratio', 0):.4f} "
-                      f"std_ratio={wapr_stats.get('wapr/std_ratio', 0):.4f} "
+                      f"mean_max_prob={wapr_stats.get('wapr/mean_max_prob', 0):.4f} "
                       f"mean_w_r={wapr_stats.get('wapr/mean_w_r', 0):.4f}")
             else:
                 print(f"[WAPR] epoch={epoch} "

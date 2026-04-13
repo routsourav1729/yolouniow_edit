@@ -51,6 +51,7 @@ CKPT=""
 CONFIG=""
 NUM_IMAGES=0
 T1_ON_T2=0
+SECTIONS=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -60,6 +61,7 @@ while [[ $# -gt 0 ]]; do
         --config)    CONFIG="$2"; shift 2;;
         --num-images) NUM_IMAGES="$2"; shift 2;;
         --t1-on-t2)  T1_ON_T2=1; shift;;
+        --sections)  shift; SECTIONS=""; while [[ $# -gt 0 && "$1" != --* ]]; do SECTIONS="$SECTIONS $1"; shift; done;;
         *) echo "Unknown arg: $1"; exit 1;;
     esac
 done
@@ -162,6 +164,7 @@ echo "  Config:     $CONFIG"
 echo "  Checkpoint: $CKPT ($(du -sh "$CKPT" 2>/dev/null | cut -f1))"
 echo "  Num images: $NUM_IMAGES"
 echo "  T1-on-T2:   $T1_ON_T2"
+echo "  Sections:   ${SECTIONS:-all}"
 echo "  Log dir:    $LOG_DIR"
 echo "=========================================="
 
@@ -175,11 +178,17 @@ else
     echo "  T1 Ckpt:    (not found, skipping visual centroid)"
 fi
 
+SECTIONS_FLAG=""
+if [ -n "$SECTIONS" ]; then
+    SECTIONS_FLAG="--sections $SECTIONS"
+fi
+
 python tools/diagnose_owod.py \
     --config "$CONFIG" \
     --checkpoint "$CKPT" \
     $T1_FLAG \
-    --num-images "$NUM_IMAGES"
+    --num-images "$NUM_IMAGES" \
+    $SECTIONS_FLAG
 
 echo ""
 echo "DIAGNOSTIC FINISHED at $(date)"

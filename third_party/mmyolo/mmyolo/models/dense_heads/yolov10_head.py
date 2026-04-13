@@ -574,16 +574,16 @@ class YOLOv10Head(BaseDenseHead):
                 anchor_score_thresh = self.anchor_label.get('score_threshold', 0.01)
                 overlaps = bbox_overlaps(flatten_pred_bboxes, gt_bboxes, mode='iou')
                 anchor_scores = flatten_cls_preds[:, :, -1].detach().sigmoid()
-                known_scores = flatten_cls_preds[:, :, :-2].detach().sigmoid()
-                max_known_scores, best_known_class = known_scores.max(dim=2)
+                max_known_scores = flatten_cls_preds[:, :, :-2].detach().sigmoid().amax(dim=2)
                 unknown_mask = (overlaps.amax(dim=2) < anchor_iou_thresh) & (fg_mask_pre_prior == 0) & (anchor_scores > anchor_score_thresh) & (anchor_scores > max_known_scores)
 
                 wapr = getattr(self, 'wapr', None)
-                if wapr is not None:
+                cached = getattr(self.head_module, '_cached_cls_logits_one2many', None)
+                if wapr is not None and cached:
                     self._wapr_stats = wapr.redistribute(
                         unknown_mask, anchor_scores,
-                        assigned_scores, max_known_scores,
-                        best_known_class)
+                        assigned_scores, cached,
+                        self.num_level_priors)
                 else:
                     assigned_scores[:, :, -2] = torch.where(unknown_mask,
                                                             anchor_scores,
@@ -746,16 +746,16 @@ class YOLOv10Head(BaseDenseHead):
                 anchor_score_thresh = self.anchor_label.get('score_threshold', 0.01)
                 overlaps = bbox_overlaps(flatten_pred_bboxes, gt_bboxes, mode='iou')
                 anchor_scores = flatten_cls_preds[:, :, -1].detach().sigmoid()
-                known_scores = flatten_cls_preds[:, :, :-2].detach().sigmoid()
-                max_known_scores, best_known_class = known_scores.max(dim=2)
+                max_known_scores = flatten_cls_preds[:, :, :-2].detach().sigmoid().amax(dim=2)
                 unknown_mask = (overlaps.amax(dim=2) < anchor_iou_thresh) & (fg_mask_pre_prior == 0) & (anchor_scores > anchor_score_thresh) & (anchor_scores > max_known_scores)
 
                 wapr = getattr(self, 'wapr', None)
-                if wapr is not None:
+                cached = getattr(self.head_module, '_cached_cls_logits_one2one', None)
+                if wapr is not None and cached:
                     self._wapr_stats = wapr.redistribute(
                         unknown_mask, anchor_scores,
-                        assigned_scores, max_known_scores,
-                        best_known_class)
+                        assigned_scores, cached,
+                        self.num_level_priors)
                 else:
                     assigned_scores[:, :, -2] = torch.where(unknown_mask,
                                                             anchor_scores,

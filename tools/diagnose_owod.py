@@ -101,6 +101,11 @@ def parse_args():
                    help='T1 checkpoint (for visual centroid analysis)')
     p.add_argument('--num-images', type=int, default=0,
                    help='Number of val images (0=all)')
+    p.add_argument('--sections', nargs='+', default=['all'],
+                   choices=['embedding', 'visual_centroid', 'tunk_proximity',
+                            'forward', 'score_margin', 'compactness',
+                            'gradient', 'unknown_fate', 'all'],
+                   help='Which sections to run (default: all)')
     return p.parse_args()
 
 
@@ -1041,8 +1046,305 @@ def section_gradient_signal(model, hooked, pipeline, dataset_key, task,
         print(f"    ratio(neg/pos) = {total_ratio:.4f}")
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# Section 8: UNKNOWN FATE ANALYSIS
+# ══════════════════════════════════════════════════════════════════════════
+
+def section_unknown_fate(model, cfg, hooked, pipeline, dataset_key, task):
+    """Section 8: Unknown Fate Analysis — full test set, single pass.
+
+    Part A: Per-unknown-class score profiles at GT locations (hook-based)
+    Part B: Fate decomposition via model inference (predict-based)
+    Part C: Full confusion matrix (derived from Part B)
+    Part D: WAPR formula what-if simulation (uses Part A scores)
+    """
+    info = DATASET_INFO[dataset_key]
+    n_base = len(info['t1_classes'])
+    n_novel = len(info['t2_novel'])
+    n_known = n_base + n_novel
+    all_known_classes = info['t1_classes'] + info['t2_novel']
+    unk_class_names = info['remaining_unknown']
+    unk_set = set(unk_class_names)
+
+    ann_dir = f"data/OWOD/Annotations/{info['ann_dataset']}"
+    img_dir = f"data/OWOD/JPEGImages/{info['ann_dataset']}"
+    test_set_file = f"data/OWOD/ImageSets/{info['ann_dataset']}/test.txt"
+    with open(test_set_file) as f:
+        img_ids = [x.strip() for x in f if x.strip()]
+
+    class_profiles = defaultdict(list)  # Part A: per-class score dicts
+    class_fates = defaultdict(list)     # Part B: per-class fate labels
+
+    print(f"\n{'='*70}")
+    print(f"UNKNOWN FATE ANALYSIS — {dataset_key} T{task}")
+    print(f"{'='*70}")
+    print(f"  Test images: {len(img_ids)} (full set)")
+    print(f"  Unknown classes: {unk_class_names}")
+    print(f"  n_known={n_known}, T_unk_idx={n_known}")
+
+    # Lower score threshold to catch all predictions
+    test_cfg = model.bbox_head.test_cfg
+    orig_score_thr = test_cfg.get('score_thr', 0.05)
+    test_cfg['score_thr'] = 0.005
+    orig_num_classes = getattr(model.bbox_head, 'num_classes', n_known + 2)
+    num_test_classes = getattr(model, 'num_test_classes', n_known + 2)
+
+    from mmdet.structures.bbox import bbox_overlaps as compute_iou
+
+    with torch.no_grad():
+        for idx, img_id in enumerate(img_ids):
+            xml_path = os.path.join(ann_dir, img_id + '.xml')
+            img_path = os.path.join(img_dir, img_id + '.jpg')
+            if not os.path.exists(xml_path) or not os.path.exists(img_path):
+                continue
+
+            objs = parse_voc_xml(xml_path)
+            unk_objs = [o for o in objs if o['name'] in unk_set]
+            if not unk_objs:
+                if (idx + 1) % 100 == 0:
+                    print(f"    ... {idx+1}/{len(img_ids)}")
+                continue
+
+            img_tensor, ds, sf, pp = load_and_preprocess_image(
+                img_path, pipeline)
+
+            # Single backbone pass: extract features once
+            img_feats, txt_feats = model.extract_feat(img_tensor, [ds])
+
+            # Part A: run one2many head to populate hooks, extract at GT
+            model.bbox_head.head_module.forward_one2many(
+                img_feats, txt_feats)
+            for obj in unk_objs:
+                sb = scale_box(obj['bbox'], sf, pp)
+                _, logit_vec = extract_at_box(hooked, sb, use_bn=True)
+                if logit_vec is None:
+                    continue
+                scores = logit_vec.sigmoid().cpu()
+                anchor_s = scores[-1].item()
+                tunk_s = scores[-2].item()
+                known_s = scores[:n_known]
+                max_ks, best_ki = known_s.max(dim=0)
+                max_ks = max_ks.item()
+                best_ki = best_ki.item()
+                class_profiles[obj['name']].append(dict(
+                    anchor_score=anchor_s,
+                    tunk_score=tunk_s,
+                    max_known_score=max_ks,
+                    best_known_class=best_ki,
+                    wapr_ratio=max_ks / max(anchor_s, 1e-8),
+                ))
+
+            # Part B: predict using already-computed features (no 2nd backbone)
+            model.bbox_head.num_classes = num_test_classes
+            results_list = model.bbox_head.predict(
+                img_feats, txt_feats, [ds], rescale=True)
+            pred = results_list[0]
+            pred_bboxes = pred.bboxes
+            pred_labels = pred.labels
+
+            gt_boxes = [o['bbox'] for o in unk_objs]
+            if pred_bboxes.shape[0] > 0:
+                gt_t = torch.tensor(gt_boxes, dtype=torch.float32,
+                                    device=pred_bboxes.device)
+                ious = compute_iou(pred_bboxes, gt_t)  # (Np, Ng)
+                for g, obj in enumerate(unk_objs):
+                    max_iou, best_p = ious[:, g].max(dim=0)
+                    if max_iou.item() >= 0.5:
+                        lbl = pred_labels[best_p].item()
+                        if lbl == n_known:
+                            class_fates[obj['name']].append('detected_unk')
+                        elif lbl < n_known:
+                            class_fates[obj['name']].append(lbl)
+                        else:
+                            class_fates[obj['name']].append('undetected')
+                    else:
+                        class_fates[obj['name']].append('undetected')
+            else:
+                for obj in unk_objs:
+                    class_fates[obj['name']].append('undetected')
+
+            if (idx + 1) % 100 == 0:
+                print(f"    ... {idx+1}/{len(img_ids)}")
+
+    # Restore model state
+    test_cfg['score_thr'] = orig_score_thr
+    model.bbox_head.num_classes = orig_num_classes
+
+    # ── Part A output: score profiles table ──────────────────────────────
+    print(f"\n{'='*70}")
+    print(f"UNKNOWN CLASS SCORE PROFILES AT GT LOCATIONS — "
+          f"{dataset_key} T{task}")
+    print(f"{'='*70}")
+    _h_anc = 'anchor(\u03bc\u00b1\u03c3)'
+    _h_unk = 'T_unk(\u03bc\u00b1\u03c3)'
+    _h_mk  = 'max_known(\u03bc\u00b1\u03c3)'
+    _h_rat = 'ratio(\u03bc\u00b1\u03c3)'
+    print(f"  {'Class':21s} | {'n_gt':>4s} | {_h_anc:>11s} | "
+          f"{_h_unk:>10s} | {_h_mk:>14s} | "
+          f"{_h_rat:>10s} | top_known_class")
+    print(f"  {'-'*21}-+-{'-'*4}-+-{'-'*11}-+-{'-'*10}-+-"
+          f"{'-'*14}-+-{'-'*10}-+-{'-'*20}")
+
+    all_profiles_flat = []
+    for cls_name in unk_class_names:
+        profs = class_profiles.get(cls_name, [])
+        n = len(profs)
+        if n == 0:
+            print(f"  {cls_name:21s} | {0:4d} | {'N/A':>11s} | "
+                  f"{'N/A':>10s} | {'N/A':>14s} | "
+                  f"{'N/A':>10s} | N/A")
+            continue
+        all_profiles_flat.extend(profs)
+        anchors = np.array([p['anchor_score'] for p in profs])
+        tunks = np.array([p['tunk_score'] for p in profs])
+        mk = np.array([p['max_known_score'] for p in profs])
+        ratios = np.array([p['wapr_ratio'] for p in profs])
+        cls_counts = defaultdict(int)
+        for p in profs:
+            cls_counts[p['best_known_class']] += 1
+        top_i = max(cls_counts, key=cls_counts.get)
+        top_n = (all_known_classes[top_i] if top_i < len(all_known_classes)
+                 else f"cls_{top_i}")
+        top_pct = 100 * cls_counts[top_i] / n
+        print(f"  {cls_name:21s} | {n:4d} | "
+              f"{anchors.mean():.2f}\u00b1{anchors.std():.2f} | "
+              f"{tunks.mean():.2f}\u00b1{tunks.std():.2f} | "
+              f"{mk.mean():.2f}\u00b1{mk.std():.2f} | "
+              f"{ratios.mean():.2f}\u00b1{ratios.std():.2f} | "
+              f"{top_n} ({top_pct:.0f}%)")
+
+    print(f"\n  WAPR ratio percentiles per class:")
+    print(f"  {'Class':21s} | {'p25':>6s} | {'p50':>6s} | "
+          f"{'p75':>6s} | {'p95':>6s}")
+    print(f"  {'-'*21}-+-{'-'*6}-+-{'-'*6}-+-{'-'*6}-+-{'-'*6}")
+    for cls_name in unk_class_names:
+        profs = class_profiles.get(cls_name, [])
+        if not profs:
+            continue
+        ratios = np.array([p['wapr_ratio'] for p in profs])
+        print(f"  {cls_name:21s} | {np.percentile(ratios, 25):6.3f} | "
+              f"{np.percentile(ratios, 50):6.3f} | "
+              f"{np.percentile(ratios, 75):6.3f} | "
+              f"{np.percentile(ratios, 95):6.3f}")
+
+    # ── Part B output: fate decomposition ────────────────────────────────
+    print(f"\n{'='*70}")
+    print(f"UNKNOWN FATE DECOMPOSITION — {dataset_key} T{task}")
+    print(f"{'='*70}")
+    print(f"  {'Class':21s} | {'n_gt':>4s} | {'detected_unk':>12s} | "
+          f"{'misclassified':>13s} | {'undetected':>10s} | "
+          f"{'U-Recall':>8s}")
+    print(f"  {'-'*21}-+-{'-'*4}-+-{'-'*12}-+-{'-'*13}-+-"
+          f"{'-'*10}-+-{'-'*8}")
+
+    total_n = total_det = total_mis = total_undet = 0
+    for cls_name in unk_class_names:
+        fates = class_fates.get(cls_name, [])
+        n = len(fates)
+        if n == 0:
+            print(f"  {cls_name:21s} | {0:4d} | {'--':>12s} | "
+                  f"{'--':>13s} | {'--':>10s} | {'--':>8s}")
+            continue
+        det = sum(1 for f in fates if f == 'detected_unk')
+        undet = sum(1 for f in fates if f == 'undetected')
+        mis = n - det - undet
+        total_n += n
+        total_det += det
+        total_mis += mis
+        total_undet += undet
+        print(f"  {cls_name:21s} | {n:4d} | "
+              f"{det:4d} ({100*det/n:5.1f}%) | "
+              f"{mis:4d} ({100*mis/n:5.1f}%) | "
+              f"{undet:4d} ({100*undet/n:4.1f}%) | "
+              f"{100*det/n:5.1f}%")
+
+    if total_n > 0:
+        print(f"  {'TOTAL':21s} | {total_n:4d} | "
+              f"{total_det:4d} ({100*total_det/total_n:5.1f}%) | "
+              f"{total_mis:4d} ({100*total_mis/total_n:5.1f}%) | "
+              f"{total_undet:4d} ({100*total_undet/total_n:4.1f}%) | "
+              f"{100*total_det/total_n:5.1f}%")
+
+    # ── Part C output: confusion matrix ──────────────────────────────────
+    print(f"\n{'='*70}")
+    print(f"UNKNOWN \u2192 KNOWN CONFUSION MATRIX — {dataset_key} T{task}")
+    print(f"{'='*70}")
+    for cls_name in unk_class_names:
+        fates = class_fates.get(cls_name, [])
+        n = len(fates)
+        if n == 0:
+            continue
+        confusion = defaultdict(int)
+        det_unk = undet = 0
+        for f in fates:
+            if f == 'detected_unk':
+                det_unk += 1
+            elif f == 'undetected':
+                undet += 1
+            else:
+                confusion[f] += 1
+        sorted_conf = sorted(confusion.items(), key=lambda x: -x[1])
+        parts = []
+        for ci, cnt in sorted_conf:
+            cn = (all_known_classes[ci] if ci < len(all_known_classes)
+                  else f"cls_{ci}")
+            parts.append(f"{cn}: {cnt} ({100*cnt/n:.1f}%)")
+        print(f"\n  {cls_name} (n={n}):")
+        if parts:
+            print(f"    {', '.join(parts)}")
+        print(f"    \u2192 unknown: {det_unk} ({100*det_unk/n:.1f}%), "
+              f"\u2192 undetected: {undet} ({100*undet/n:.1f}%)")
+
+    # ── Part D output: WAPR what-if simulation ───────────────────────────
+    print(f"\n{'='*70}")
+    print(f"WAPR FORMULA WHAT-IF — {dataset_key} T{task}")
+    print(f"{'='*70}")
+    if not all_profiles_flat:
+        print("  No unknown GT score profiles collected.")
+        return
+
+    all_ratios_t = torch.tensor(
+        [p['wapr_ratio'] for p in all_profiles_flat]).float()
+
+    formulas = [
+        ('No WAPR',         lambda r: torch.ones_like(r)),
+        ('Current (1-r)',   lambda r: (1.0 - r).clamp(0, 1)),
+        ('Sigmoid(10,0.5)', lambda r: 1 - torch.sigmoid(10 * (r - 0.5))),
+        ('Hard \u03c4=0.7',      lambda r: (r < 0.7).float()),
+        ('Hard \u03c4=0.5',      lambda r: (r < 0.5).float()),
+        ('Squared (1-r)\u00b2',  lambda r: (1.0 - r).clamp(0, 1) ** 2),
+    ]
+
+    per_cls_r = {}
+    active_cls = []
+    for c in unk_class_names:
+        profs = class_profiles.get(c, [])
+        if profs:
+            per_cls_r[c] = torch.tensor(
+                [p['wapr_ratio'] for p in profs]).float()
+            active_cls.append(c)
+
+    hdrs = ' | '.join(f'{c[:7]:>7s}' for c in active_cls)
+    print(f"  {'Formula':18s} | {'mean_w_r':>8s} | "
+          f"{'%_suppr':>7s} | {hdrs}")
+    csep = ' | '.join(['-' * 7] * len(active_cls))
+    print(f"  {'-'*18}-+-{'-'*8}-+-{'-'*7}-+-{csep}")
+
+    for fname, func in formulas:
+        wr = func(all_ratios_t)
+        mwr = wr.mean().item()
+        sup = 100 * (wr < 0.5).float().mean().item()
+        cvals = []
+        for c in active_cls:
+            cv = func(per_cls_r[c]).mean().item()
+            cvals.append(f'{cv:7.3f}')
+        print(f"  {fname:18s} | {mwr:8.3f} | "
+              f"{sup:6.1f}% | {' | '.join(cvals)}")
+
+
 def main():
     args = parse_args()
+    sections = set(args.sections)
     dataset_key = os.environ.get('DATASET', 'IDD')
     task = int(os.environ.get('TASK', '2'))
 
@@ -1051,14 +1353,19 @@ def main():
               f"Supported: {list(DATASET_INFO.keys())}")
         sys.exit(1)
 
+    def run(name):
+        return name in sections or 'all' in sections
+
     print(f"Dataset: {dataset_key}, Task: T{task}")
     print(f"Config:  {args.config}")
     print(f"Ckpt:    {args.checkpoint}")
     if args.t1_checkpoint:
         print(f"T1 Ckpt: {args.t1_checkpoint}")
+    print(f"Sections: {sorted(sections)}")
 
     # Phase 1: Embedding analysis (no GPU)
-    analyze_embeddings(dataset_key, task)
+    if run('embedding'):
+        analyze_embeddings(dataset_key, task)
 
     # Import and register modules
     from mmengine.config import Config
@@ -1073,38 +1380,60 @@ def main():
     pipeline = build_image_pipeline(cfg)
 
     # Phase 2: Visual centroid (loads T1 model, then frees it)
-    if task >= 2:
+    if run('visual_centroid') and task >= 2:
         section_visual_centroid(args, cfg, dataset_key, task, pipeline)
 
     # Phase 3: T_unk proximity (CPU only, reads checkpoints for embeddings)
-    if task >= 2:
+    if run('tunk_proximity') and task >= 2:
         section_tunk_proximity(args, dataset_key, task)
 
-    # Build T2 model for remaining phases
+    # Build T2 model only if needed by remaining phases
+    needs_model = any(run(s) for s in ['forward', 'score_margin',
+                                        'compactness', 'gradient',
+                                        'unknown_fate'])
+    if not needs_model:
+        print(f"\n{'='*70}")
+        print("DIAGNOSTIC COMPLETE")
+        print(f"{'='*70}")
+        return
+
     print(f"\n  Loading T2 model: {args.checkpoint}")
     model = build_model(cfg, args.checkpoint)
 
     # Phase 4: Original forward diagnostics
-    run_forward_diagnostics(model, cfg, dataset_key, task, args.num_images)
+    if run('forward'):
+        run_forward_diagnostics(model, cfg, dataset_key, task,
+                                args.num_images)
 
-    # Phase 5+6: Need hooks for GT-level analysis
-    hooked, handles = setup_hooks(model.bbox_head.head_module)
+    # Phase 5-8: Need hooks for GT-level analysis
+    needs_hooks = any(run(s) for s in ['score_margin', 'compactness',
+                                        'gradient', 'unknown_fate'])
+    hooked, handles = None, []
+    if needs_hooks:
+        hooked, handles = setup_hooks(model.bbox_head.head_module)
 
-    if task >= 2:
-        # Phase 5: Score margin at GT locations
+    # Phase 5: Score margin at GT locations
+    if run('score_margin') and task >= 2:
         section_score_margin(model, hooked, pipeline,
                              dataset_key, task, args.num_images)
 
     # Phase 6: Feature compactness
-    section_feature_compactness(model, hooked, pipeline,
-                                dataset_key, task, args.num_images)
+    if run('compactness'):
+        section_feature_compactness(model, hooked, pipeline,
+                                    dataset_key, task, args.num_images)
 
     # Phase 7: Gradient signal analysis
-    if task >= 2:
+    if run('gradient') and task >= 2:
         section_gradient_signal(model, hooked, pipeline,
                                 dataset_key, task, args.num_images)
 
-    remove_hooks(handles)
+    # Phase 8: Unknown fate analysis (always full test set)
+    if run('unknown_fate') and task >= 2:
+        section_unknown_fate(model, cfg, hooked, pipeline,
+                             dataset_key, task)
+
+    if handles:
+        remove_hooks(handles)
 
     print(f"\n{'='*70}")
     print("DIAGNOSTIC COMPLETE")
