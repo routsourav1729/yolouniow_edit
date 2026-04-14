@@ -160,7 +160,8 @@ def build_model(cfg, checkpoint_path):
 
 
 def setup_hooks(head_module):
-    """Register forward hooks on BN and logit outputs of all FPN levels.
+    """Register forward hooks on one2one BN and logit outputs of all FPN levels.
+    Uses one2one head (same as inference/eval), NOT one2many.
     Returns (hooked_dict, handle_list)."""
     hooked = {}
 
@@ -170,9 +171,9 @@ def setup_hooks(head_module):
         return hook_fn
 
     handles = []
-    for i, layer in enumerate(head_module.one2many_cls_preds):
+    for i, layer in enumerate(head_module.one2one_cls_preds):
         handles.append(layer.register_forward_hook(make_hook(f'cls_pred_{i}')))
-    for i, layer in enumerate(head_module.one2many_cls_contrasts):
+    for i, layer in enumerate(head_module.one2one_cls_contrasts):
         handles.append(layer.register_forward_hook(make_hook(f'cls_logit_{i}')))
         if hasattr(layer, 'norm'):
             handles.append(layer.norm.register_forward_hook(
@@ -258,9 +259,9 @@ def build_image_pipeline(cfg):
 
 
 def trigger_hooks(model, img_tensor, data_sample):
-    """Run extract_feat + forward_one2many to populate hooks."""
+    """Run extract_feat + forward_one2one to populate hooks (matches eval)."""
     img_feats, txt_feats = model.extract_feat(img_tensor, [data_sample])
-    model.bbox_head.head_module.forward_one2many(img_feats, txt_feats)
+    model.bbox_head.head_module.forward_one2one(img_feats, txt_feats)
 
 
 def analyze_embeddings(dataset_key, task):
@@ -338,10 +339,10 @@ def run_forward_diagnostics(model, cfg, dataset_key, task, n_imgs):
     head = model.bbox_head.head_module
     n_imgs = len(val_dataset) if n_imgs <= 0 else min(n_imgs, len(val_dataset))
 
-    bn_layer = head.one2many_cls_contrasts[0].norm
+    bn_layer = head.one2one_cls_contrasts[0].norm
     rmean = bn_layer.running_mean
     rvar = bn_layer.running_var
-    print(f"  BN running_mean norm: {rmean.norm():.2f}")
+    print(f"  BN running_mean norm: {rmean.norm():.2f}  (one2one head)")
     print(f"  BN running_var  mean: {rvar.mean():.4f}")
     print(f"  BN SNR: {rvar.mean().sqrt() / rmean.norm():.4f}")
 
@@ -368,8 +369,8 @@ def run_forward_diagnostics(model, cfg, dataset_key, task, n_imgs):
                 batch_inputs, batch['data_samples'])
 
             for lvl_idx, img_feat in enumerate(img_feats):
-                cls_embed = head.one2many_cls_preds[lvl_idx](img_feat)
-                cls_logit = head.one2many_cls_contrasts[lvl_idx](
+                cls_embed = head.one2one_cls_preds[lvl_idx](img_feat)
+                cls_logit = head.one2one_cls_contrasts[lvl_idx](
                     cls_embed, txt_feats)
                 b, k, h, w = cls_logit.shape
                 flat = cls_logit.permute(0, 2, 3, 1).reshape(-1, k)
@@ -901,8 +902,8 @@ def section_gradient_signal(model, hooked, pipeline, dataset_key, task,
     else:
         img_ids = all_img_ids
 
-    # Get logit_scale from BNContrastiveHead (same across levels)
-    contrast_head = model.bbox_head.head_module.one2many_cls_contrasts[0]
+    # Get logit_scale from BNContrastiveHead (one2one, same as eval)
+    contrast_head = model.bbox_head.head_module.one2one_cls_contrasts[0]
     logit_scale_val = contrast_head.logit_scale.exp().item()
     bias_val = contrast_head.bias.item()
 
@@ -1111,8 +1112,8 @@ def section_unknown_fate(model, cfg, hooked, pipeline, dataset_key, task):
             # Single backbone pass: extract features once
             img_feats, txt_feats = model.extract_feat(img_tensor, [ds])
 
-            # Part A: run one2many head to populate hooks, extract at GT
-            model.bbox_head.head_module.forward_one2many(
+            # Part A: run one2one head to populate hooks, extract at GT
+            model.bbox_head.head_module.forward_one2one(
                 img_feats, txt_feats)
             for obj in unk_objs:
                 sb = scale_box(obj['bbox'], sf, pp)

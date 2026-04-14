@@ -2,14 +2,14 @@
 #SBATCH --job-name=diag_owod
 #SBATCH --output=slurm_logs/analysis/diag_%j.out
 #SBATCH --error=slurm_logs/analysis/diag_%j.err
-#SBATCH --partition=l40
-#SBATCH --qos=l40
+#SBATCH --partition=a40
+#SBATCH --qos=a40
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
-#SBATCH --mem=128G
-#SBATCH --time=06:00:00
+#SBATCH --mem=48G
+#SBATCH --time=01:30:00
 
 # ============================================================================
 # Universal OWOD Diagnostic
