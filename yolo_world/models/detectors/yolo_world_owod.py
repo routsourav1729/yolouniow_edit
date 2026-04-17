@@ -32,6 +32,7 @@ class OWODDetector(YOLODetector):
                  use_mlp_adapter: bool = False,
                  wapr: dict = None,
                  gadl: dict = None,
+                 kume: dict = None,
                  **kwargs) -> None:
         self.mm_neck = mm_neck
         self.num_training_classes = num_train_classes
@@ -117,6 +118,23 @@ class OWODDetector(YOLODetector):
                   f"num_known={self.gadl.num_known}, "
                   f"unk_idx={self.gadl.unk_idx}, "
                   f"weight={self.gadl.weight}")
+
+        # KUME: Known-Unknown Margin Enforcement (T2 only)
+        self.kume = None
+        if kume is not None:
+            from yolo_world.models.losses.kume import KUMEModule
+            self.kume = KUMEModule(
+                num_known_classes=kume.get(
+                    'num_known_classes', num_train_classes - 2),
+                unk_idx=kume.get('unk_idx', num_train_classes - 2),
+                margin=kume.get('margin', 1.0),
+                weight=kume.get('weight', 0.5),
+            )
+            self.bbox_head._kume = self.kume
+            print(f"[KUME] Initialized: num_known={self.kume.num_known_classes}, "
+                  f"unk_idx={self.kume.unk_idx}, "
+                  f"margin={self.kume.margin}, "
+                  f"weight={self.kume.weight}")
 
 
 

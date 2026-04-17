@@ -9,7 +9,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --gres=gpu:1
 #SBATCH --mem=48G
-#SBATCH --time=01:30:00
+#SBATCH --time=02:00:00
 
 # ============================================================================
 # Universal OWOD Diagnostic
@@ -26,6 +26,13 @@
 #   --config          Override config (default: auto-detect)
 #   --num-images      Number of val images (default: 50)
 #   --t1-on-t2        Evaluate T1 ckpt on T2 config (diag mode)
+#   --sections        Subset: embedding visual_centroid tunk_proximity
+#                              forward score_margin compactness gradient
+#                              unknown_fate logit_shape  (default: all)
+#
+# Environment overrides:
+#   VISUALIZE=1       For logit_shape section, also save overlay histograms
+#   FEWSHOT_K / FEWSHOT_SEED  (defaults: 10 / 1)
 # ============================================================================
 
 source /home/agipml/sourav.rout/miniconda3/bin/activate yolouniow
@@ -151,9 +158,10 @@ ln -sf "$(pwd)/slurm_logs/analysis/diag_${SLURM_JOB_ID}.err" "${LOG_DIR}/diag_${
 # Set env vars for the config
 export THRESHOLD=0.05
 export SAVE=False
-export FEWSHOT_K=10
-export FEWSHOT_SEED=1
+export FEWSHOT_K=${FEWSHOT_K:-10}
+export FEWSHOT_SEED=${FEWSHOT_SEED:-1}
 export FEWSHOT_DIR
+export VISUALIZE=${VISUALIZE:-0}
 
 echo "=========================================="
 echo "OWOD DIAGNOSTIC"

@@ -104,7 +104,7 @@ def parse_args():
     p.add_argument('--sections', nargs='+', default=['all'],
                    choices=['embedding', 'visual_centroid', 'tunk_proximity',
                             'forward', 'score_margin', 'compactness',
-                            'gradient', 'unknown_fate', 'all'],
+                            'gradient', 'unknown_fate', 'logit_shape', 'all'],
                    help='Which sections to run (default: all)')
     return p.parse_args()
 
@@ -1343,6 +1343,545 @@ def section_unknown_fate(model, cfg, hooked, pipeline, dataset_key, task):
               f"{sup:6.1f}% | {' | '.join(cvals)}")
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# Section 9: LOGIT-DISTRIBUTION SHAPE SEPARABILITY
+# ══════════════════════════════════════════════════════════════════════════
+
+def _ls_collect_fewshot_image_ids(fewshot_dir):
+    """Union of image IDs across every box_<K>shot_<cls>_train.txt file."""
+    img_ids = set()
+    if not os.path.isdir(fewshot_dir):
+        return img_ids
+    for fn in os.listdir(fewshot_dir):
+        if not fn.endswith('.txt'):
+            continue
+        fp = os.path.join(fewshot_dir, fn)
+        try:
+            with open(fp) as f:
+                for ln in f:
+                    ln = ln.strip()
+                    if not ln:
+                        continue
+                    bn = os.path.basename(ln)
+                    iid = bn.rsplit('.', 1)[0] if '.' in bn else bn
+                    img_ids.add(iid)
+        except OSError:
+            continue
+    return img_ids
+
+
+def _ls_compute_stats(known_probs_np, probs_np):
+    """Per-sample statistics from a known_probs vector (numpy)."""
+    kp = known_probs_np
+    if kp.size == 0:
+        return None
+    sorted_desc = np.sort(kp)[::-1]
+    top1 = float(sorted_desc[0])
+    top2 = float(sorted_desc[1]) if sorted_desc.size > 1 else 0.0
+    s = kp.sum()
+    if s < 1e-8:
+        simplex = np.full_like(kp, 1.0 / kp.size)
+    else:
+        simplex = kp / s
+    entropy = float(-np.sum(simplex * np.log(simplex + 1e-8)))
+    variance = float(kp.var())
+    top3_sum = float(sorted_desc[:3].sum())
+    top3_ratio = top3_sum / s if s > 1e-8 else 0.0
+    anchor_score = float(probs_np[-1])
+    tunk_score = float(probs_np[-2])
+    wapr_ratio = top1 / max(anchor_score, 1e-8)
+    return dict(
+        max_known=top1,
+        top1_minus_top2=top1 - top2,
+        entropy=entropy,
+        variance=variance,
+        top3_ratio=top3_ratio,
+        anchor_score=anchor_score,
+        tunk_score=tunk_score,
+        wapr_ratio=wapr_ratio,
+    )
+
+
+def _ls_auroc(pos_scores, neg_scores):
+    """Rank-based AUROC. pos=higher class, neg=lower class."""
+    pos = np.asarray(pos_scores, dtype=np.float64)
+    neg = np.asarray(neg_scores, dtype=np.float64)
+    if pos.size == 0 or neg.size == 0:
+        return float('nan')
+    try:
+        from sklearn.metrics import roc_auc_score
+        y = np.concatenate([np.ones(pos.size), np.zeros(neg.size)])
+        s = np.concatenate([pos, neg])
+        return float(roc_auc_score(y, s))
+    except Exception:
+        all_s = np.concatenate([pos, neg])
+        order = np.argsort(all_s, kind='mergesort')
+        ranks = np.empty_like(order, dtype=np.float64)
+        ranks[order] = np.arange(1, all_s.size + 1)
+        # average ranks for ties
+        # simple tie handling
+        uniq, inv, counts = np.unique(all_s, return_inverse=True,
+                                      return_counts=True)
+        if (counts > 1).any():
+            avg_ranks = np.zeros(uniq.size)
+            cum = 0
+            for i, c in enumerate(counts):
+                avg_ranks[i] = cum + (c + 1) / 2.0
+                cum += c
+            ranks = avg_ranks[inv]
+        sum_pos_ranks = ranks[:pos.size].sum() if False else \
+            ranks[np.concatenate([np.ones(pos.size, dtype=bool),
+                                  np.zeros(neg.size, dtype=bool)])].sum()
+        auc = (sum_pos_ranks - pos.size * (pos.size + 1) / 2.0) / (
+            pos.size * neg.size)
+        return float(auc)
+
+
+def _ls_summ(vals):
+    v = np.asarray(vals, dtype=np.float64)
+    if v.size == 0:
+        return None
+    return dict(
+        n=int(v.size),
+        mean=float(v.mean()),
+        std=float(v.std()),
+        p25=float(np.percentile(v, 25)),
+        p50=float(np.percentile(v, 50)),
+        p75=float(np.percentile(v, 75)),
+    )
+
+
+def _ls_print_bucket_table(regime_label, buckets):
+    """Buckets: dict[bucket_name] -> list of stats-dict. Print summary table."""
+    print(f"\n{'='*70}")
+    print(f"LOGIT SHAPE SUMMARY — {regime_label}")
+    print(f"{'='*70}")
+    stat_keys = ['max_known', 'top1_minus_top2', 'entropy',
+                 'variance', 'top3_ratio', 'anchor_score',
+                 'tunk_score', 'wapr_ratio']
+    bucket_order = ['true_base', 'true_novel', 'true_unknown',
+                    'background_pseudo_unknown']
+    for sk in stat_keys:
+        print(f"\n  statistic: {sk}")
+        print(f"  {'bucket':28s} | {'n':>5s} | {'mean':>8s} | "
+              f"{'std':>8s} | {'p25':>8s} | {'p50':>8s} | {'p75':>8s}")
+        print(f"  {'-'*28}-+-{'-'*5}-+-{'-'*8}-+-{'-'*8}-+-"
+              f"{'-'*8}-+-{'-'*8}-+-{'-'*8}")
+        for b in bucket_order:
+            recs = buckets.get(b, [])
+            vals = [r[sk] for r in recs if r is not None]
+            s = _ls_summ(vals)
+            if s is None:
+                print(f"  {b:28s} | {0:5d} | {'--':>8s} | {'--':>8s} | "
+                      f"{'--':>8s} | {'--':>8s} | {'--':>8s}")
+            else:
+                print(f"  {b:28s} | {s['n']:5d} | {s['mean']:8.4f} | "
+                      f"{s['std']:8.4f} | {s['p25']:8.4f} | "
+                      f"{s['p50']:8.4f} | {s['p75']:8.4f}")
+
+
+def _ls_print_pairwise_auroc(regime_label, buckets):
+    print(f"\n{'='*70}")
+    print(f"PAIRWISE SEPARABILITY (AUROC) — {regime_label}")
+    print(f"{'='*70}")
+    pairs = [
+        ('true_unknown', 'background_pseudo_unknown'),
+        ('true_unknown', 'true_base'),
+        ('true_unknown', 'true_novel'),
+        ('background_pseudo_unknown', 'true_base'),
+    ]
+    stat_keys = ['max_known', 'top1_minus_top2', 'entropy',
+                 'variance', 'top3_ratio', 'wapr_ratio',
+                 'anchor_score', 'tunk_score']
+    for pos, neg in pairs:
+        pos_recs = buckets.get(pos, [])
+        neg_recs = buckets.get(neg, [])
+        print(f"\n  {pos} (pos, n={len(pos_recs)}) vs "
+              f"{neg} (neg, n={len(neg_recs)})")
+        print(f"  {'statistic':20s} | {'AUROC':>7s} | "
+              f"{'AUROC(inv)':>10s} | higher_predicts")
+        print(f"  {'-'*20}-+-{'-'*7}-+-{'-'*10}-+-{'-'*15}")
+        for sk in stat_keys:
+            pv = [r[sk] for r in pos_recs if r is not None]
+            nv = [r[sk] for r in neg_recs if r is not None]
+            auc = _ls_auroc(pv, nv)
+            if np.isnan(auc):
+                continue
+            inv = 1.0 - auc
+            higher = pos if auc >= 0.5 else neg
+            best = max(auc, inv)
+            print(f"  {sk:20s} | {auc:7.4f} | {inv:10.4f} | "
+                  f"{higher} ({best:.3f})")
+
+
+def _ls_waprpp_simulation(buckets):
+    """Simulate gating rules over the per-sample records."""
+    print(f"\n{'='*70}")
+    print(f"WAPR++ SIMULATION (gating rules applied to collected samples)")
+    print(f"{'='*70}")
+
+    def pct_kept(recs, keep_fn):
+        if not recs:
+            return float('nan')
+        kept = sum(1 for r in recs if r is not None and keep_fn(r))
+        return 100.0 * kept / len(recs)
+
+    rules = []
+    rules.append(('Current WAPR (ratio<0.5)',
+                  lambda r: r['wapr_ratio'] < 0.5))
+    for tau in (0.5, 0.7, 0.85):
+        rules.append((f'Entropy gate τ={tau}',
+                      (lambda t: (lambda r: r['entropy'] > t))(tau)))
+    for tau in (0.02, 0.05, 0.10):
+        rules.append((f'Margin gate τ={tau}',
+                      (lambda t: (lambda r: r['top1_minus_top2'] < t))(tau)))
+    rules.append(('Combined (ratio<0.5 AND entropy>0.7)',
+                  lambda r: (r['wapr_ratio'] < 0.5) and (r['entropy'] > 0.7)))
+    rules.append(('Combined (ratio<0.5 OR entropy>0.7)',
+                  lambda r: (r['wapr_ratio'] < 0.5) or (r['entropy'] > 0.7)))
+
+    tu = buckets.get('true_unknown', [])
+    bg = buckets.get('background_pseudo_unknown', [])
+    tb = buckets.get('true_base', [])
+
+    print(f"  {'Rule':42s} | {'tu_kept%':>9s} | {'bg_suppr%':>10s} | "
+          f"{'tb_kept%':>9s}")
+    print(f"  {'-'*42}-+-{'-'*9}-+-{'-'*10}-+-{'-'*9}")
+    for name, fn in rules:
+        tu_kept = pct_kept(tu, fn)
+        bg_kept = pct_kept(bg, fn)
+        bg_suppr = (100.0 - bg_kept) if not np.isnan(bg_kept) else float('nan')
+        tb_kept = pct_kept(tb, fn)
+        def f(v):
+            return f"{v:9.2f}" if not np.isnan(v) else f"{'--':>9s}"
+        def f10(v):
+            return f"{v:10.2f}" if not np.isnan(v) else f"{'--':>10s}"
+        print(f"  {name:42s} | {f(tu_kept)} | {f10(bg_suppr)} | "
+              f"{f(tb_kept)}")
+
+
+def _ls_per_class_unknown(per_cls_records, remaining_unknown):
+    print(f"\n{'='*70}")
+    print(f"PER-CLASS BREAKDOWN — true_unknown bucket")
+    print(f"{'='*70}")
+    print(f"  {'class':25s} | {'n':>5s} | {'entropy_μ':>10s} | "
+          f"{'margin_μ':>10s} | {'wapr_ratio_μ':>12s}")
+    print(f"  {'-'*25}-+-{'-'*5}-+-{'-'*10}-+-{'-'*10}-+-{'-'*12}")
+    for c in remaining_unknown:
+        recs = per_cls_records.get(c, [])
+        if not recs:
+            print(f"  {c:25s} | {0:5d} | {'--':>10s} | {'--':>10s} | "
+                  f"{'--':>12s}")
+            continue
+        ent = np.mean([r['entropy'] for r in recs])
+        mar = np.mean([r['top1_minus_top2'] for r in recs])
+        wr = np.mean([r['wapr_ratio'] for r in recs])
+        print(f"  {c:25s} | {len(recs):5d} | {ent:10.4f} | "
+              f"{mar:10.4f} | {wr:12.4f}")
+
+
+def _ls_visualize(buckets_by_regime, dataset_key, task):
+    try:
+        import matplotlib
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+    except Exception as e:
+        print(f"  [VIS SKIP] matplotlib unavailable: {e}")
+        return
+    base_dir = ('/home/agipml/sourav.rout/ALL_FILES/hypyolo/YOLO-UniOW/'
+                'visualizations')
+    os.makedirs(base_dir, exist_ok=True)
+    stem = f'logit_shape_{dataset_key}_t{task}'
+    out_dir = os.path.join(base_dir, stem)
+    n = 1
+    while os.path.exists(out_dir):
+        out_dir = os.path.join(base_dir, f'{stem}_{n}')
+        n += 1
+    os.makedirs(out_dir, exist_ok=True)
+    stats = ['entropy', 'top1_minus_top2', 'variance', 'top3_ratio']
+    bucket_order = ['true_base', 'true_novel', 'true_unknown',
+                    'background_pseudo_unknown']
+    for regime, buckets in buckets_by_regime.items():
+        for sk in stats:
+            fig, ax = plt.subplots(figsize=(7, 4))
+            for b in bucket_order:
+                vals = [r[sk] for r in buckets.get(b, []) if r is not None]
+                if not vals:
+                    continue
+                ax.hist(vals, bins=40, alpha=0.45, label=f'{b} (n={len(vals)})')
+            ax.set_title(f'{regime}: {sk}')
+            ax.set_xlabel(sk)
+            ax.set_ylabel('count')
+            ax.legend(fontsize=7)
+            fig.tight_layout()
+            fig.savefig(os.path.join(out_dir, f'{regime}_{sk}.png'), dpi=110)
+            plt.close(fig)
+    print(f"  [VIS] saved to {out_dir}")
+
+
+def _ls_bucket_of(name, t1_set, t2_novel_set, unk_set):
+    if name in t1_set:
+        return 'true_base'
+    if name in t2_novel_set:
+        return 'true_novel'
+    if name in unk_set:
+        return 'true_unknown'
+    return None
+
+
+def _ls_iou_xyxy(a, B):
+    """a: (4,), B: (N,4), numpy. Return (N,) IoU."""
+    if B.shape[0] == 0:
+        return np.zeros(0, dtype=np.float64)
+    xx1 = np.maximum(a[0], B[:, 0])
+    yy1 = np.maximum(a[1], B[:, 1])
+    xx2 = np.minimum(a[2], B[:, 2])
+    yy2 = np.minimum(a[3], B[:, 3])
+    iw = np.clip(xx2 - xx1, 0, None)
+    ih = np.clip(yy2 - yy1, 0, None)
+    inter = iw * ih
+    area_a = max(0.0, (a[2] - a[0])) * max(0.0, (a[3] - a[1]))
+    area_b = np.clip(B[:, 2] - B[:, 0], 0, None) * np.clip(
+        B[:, 3] - B[:, 1], 0, None)
+    union = area_a + area_b - inter
+    iou = np.where(union > 0, inter / np.maximum(union, 1e-8), 0.0)
+    return iou
+
+
+def _ls_process_image(model, hooked, pipeline, img_path, full_objs,
+                      n_known, t1_set, t2_novel_set, unk_set,
+                      bg_sample_cap=20, rng=None):
+    """Single forward pass. Returns (gt_records_list, bg_records_list,
+    per_cls_unk_records_dict). Each record is per-sample stats dict plus
+    a 'gt_name' field (bg records have gt_name='__bg__')."""
+    import torch as _t
+    img_tensor, ds, sf, pp = load_and_preprocess_image(img_path, pipeline)
+    # one forward pass populates hooked for all FPN levels
+    model.bbox_head.head_module.forward_one2one(
+        *model.extract_feat(img_tensor, [ds]))
+
+    gt_records = []
+    per_cls_unk = defaultdict(list)
+
+    # GT boxes: use full XML (contamination-aware)
+    for obj in full_objs:
+        bucket = _ls_bucket_of(obj['name'], t1_set, t2_novel_set, unk_set)
+        if bucket is None:
+            continue
+        sb = scale_box(obj['bbox'], sf, pp)
+        _, logit_vec = extract_at_box(hooked, sb, use_bn=True)
+        if logit_vec is None:
+            continue
+        probs = logit_vec.sigmoid().cpu().numpy()
+        known_np = probs[:n_known]
+        stats = _ls_compute_stats(known_np, probs)
+        if stats is None:
+            continue
+        stats['bucket'] = bucket
+        stats['gt_name'] = obj['name']
+        gt_records.append(stats)
+        if bucket == 'true_unknown':
+            per_cls_unk[obj['name']].append(stats)
+
+    # Background pseudo-unknown anchors
+    bg_records = []
+    if full_objs:
+        all_gt = np.array([o['bbox'] for o in full_objs], dtype=np.float64)
+    else:
+        all_gt = np.zeros((0, 4), dtype=np.float64)
+
+    candidate_list = []  # (cx, cy, level, k_vec, probs_vec)
+    for lvl in range(len(FPN_STRIDES)):
+        logit_key = f'cls_logit_{lvl}'
+        if logit_key not in hooked:
+            continue
+        logit_map = hooked[logit_key]  # (1,K,H,W)
+        K = logit_map.shape[1]
+        stride = FPN_STRIDES[lvl]
+        flat = logit_map[0].permute(1, 2, 0).reshape(-1, K)  # (H*W, K)
+        probs = flat.sigmoid()
+        known_probs = probs[:, :n_known]
+        max_known, _ = known_probs.max(dim=1)
+        anchor = probs[:, -1]
+        gk_mask = (anchor > 0.01) & (anchor > max_known)
+        if not gk_mask.any():
+            continue
+        idxs = gk_mask.nonzero(as_tuple=False).flatten().cpu().numpy()
+        H = logit_map.shape[2]
+        W = logit_map.shape[3]
+        probs_cpu = probs[gk_mask].cpu().numpy()
+        for row_local, flat_idx in enumerate(idxs):
+            gy = flat_idx // W
+            gx = flat_idx % W
+            cx = (gx + 0.5) * stride
+            cy = (gy + 0.5) * stride
+            # approx anchor box: cell-sized, for IoU check only
+            half = stride / 2.0
+            ab = np.array([cx - half, cy - half,
+                           cx + half, cy + half], dtype=np.float64)
+            # scale anchor-box back to original image coords for IoU vs GT
+            # GT boxes are in ORIGINAL image coords; anchor is in padded coords
+            # So we undo pad+scale: orig = (padded - pad_left) / scale
+            ox1 = (ab[0] - pp[2]) / max(sf[0], 1e-8)
+            oy1 = (ab[1] - pp[0]) / max(sf[1], 1e-8)
+            ox2 = (ab[2] - pp[2]) / max(sf[0], 1e-8)
+            oy2 = (ab[3] - pp[0]) / max(sf[1], 1e-8)
+            orig_ab = np.array([ox1, oy1, ox2, oy2], dtype=np.float64)
+            if all_gt.shape[0] > 0:
+                ious = _ls_iou_xyxy(orig_ab, all_gt)
+                if ious.max() >= 0.3:
+                    continue
+            candidate_list.append(probs_cpu[row_local])
+
+    if candidate_list:
+        if rng is not None and len(candidate_list) > bg_sample_cap:
+            sel = rng.choice(len(candidate_list), bg_sample_cap, replace=False)
+            candidate_list = [candidate_list[i] for i in sel]
+        for p_np in candidate_list:
+            known_np = p_np[:n_known]
+            stats = _ls_compute_stats(known_np, p_np)
+            if stats is None:
+                continue
+            stats['bucket'] = 'background_pseudo_unknown'
+            stats['gt_name'] = '__bg__'
+            bg_records.append(stats)
+
+    return gt_records, bg_records, per_cls_unk
+
+
+def section_logit_shape(model, hooked, pipeline, dataset_key, task, n_imgs):
+    """Logit-distribution shape separability analysis.
+    Regime A: Few-shot T2 training images (cross-ref full XML).
+    Regime B: Test set images (full annotations).
+    """
+    if task < 2:
+        print(f"\n  [SKIP] logit_shape: requires task>=2")
+        return
+
+    info = DATASET_INFO[dataset_key]
+    n_base = len(info['t1_classes'])
+    n_novel = len(info['t2_novel'])
+    n_known = n_base + n_novel
+    t1_set = set(info['t1_classes'])
+    t2_novel_set = set(info['t2_novel'])
+    unk_set = set(info['remaining_unknown'])
+
+    ann_dir = f"data/OWOD/Annotations/{info['ann_dataset']}"
+    img_dir = f"data/OWOD/JPEGImages/{info['ann_dataset']}"
+
+    cap = n_imgs if (n_imgs and n_imgs > 0) else 0  # 0 = all images
+
+    print(f"\n{'='*70}")
+    print(f"LOGIT SHAPE SEPARABILITY — {dataset_key} T{task}")
+    print(f"{'='*70}")
+    print(f"  n_known={n_known}  cap_images_per_regime={'all' if cap == 0 else cap}")
+    print(f"  buckets: true_base / true_novel / true_unknown / "
+          f"background_pseudo_unknown")
+
+    fewshot_seed = int(os.environ.get('FEWSHOT_SEED', '1'))
+    fewshot_k = int(os.environ.get('FEWSHOT_K', '10'))
+    fewshot_dir = f"data/OWOD/{info['fewshot_dir_key']}/seed{fewshot_seed}"
+    print(f"  fewshot_dir={fewshot_dir}  K={fewshot_k}")
+
+    buckets_by_regime = {}
+    per_cls_unk_by_regime = {}
+    skipped_by_regime = {}
+
+    for regime_label, img_ids_source in [
+        ('A_fewshot_train', 'fewshot'),
+        ('B_test', 'test'),
+    ]:
+        if img_ids_source == 'fewshot':
+            fs_ids = sorted(_ls_collect_fewshot_image_ids(fewshot_dir))
+            if not fs_ids:
+                print(f"\n  [WARN] regime {regime_label}: no fewshot image "
+                      f"IDs found in {fewshot_dir}")
+                buckets_by_regime[regime_label] = {}
+                per_cls_unk_by_regime[regime_label] = {}
+                skipped_by_regime[regime_label] = 0
+                continue
+            all_ids = fs_ids
+        else:
+            test_file = f"data/OWOD/ImageSets/{info['ann_dataset']}/test.txt"
+            with open(test_file) as f:
+                all_ids = [x.strip() for x in f if x.strip()]
+
+        if cap > 0 and len(all_ids) > cap:
+            rng = np.random.RandomState(42)
+            img_ids = list(rng.choice(all_ids, cap, replace=False))
+        else:
+            img_ids = list(all_ids)
+
+        bg_rng = np.random.RandomState(123)
+        buckets = defaultdict(list)
+        per_cls_unk = defaultdict(list)
+        n_skipped = 0
+
+        print(f"\n  [{regime_label}] processing {len(img_ids)} images...")
+
+        with torch.no_grad():
+            for idx, img_id in enumerate(img_ids):
+                xml_path = os.path.join(ann_dir, img_id + '.xml')
+                img_path = os.path.join(img_dir, img_id + '.jpg')
+                if not os.path.exists(xml_path) or not os.path.exists(img_path):
+                    n_skipped += 1
+                    continue
+                try:
+                    full_objs = parse_voc_xml(xml_path)
+                except Exception:
+                    n_skipped += 1
+                    continue
+                try:
+                    gt_recs, bg_recs, pc_unk = _ls_process_image(
+                        model, hooked, pipeline, img_path, full_objs,
+                        n_known, t1_set, t2_novel_set, unk_set,
+                        bg_sample_cap=20, rng=bg_rng)
+                except Exception as e:
+                    n_skipped += 1
+                    if n_skipped <= 3:
+                        print(f"    [warn] img {img_id} failed: {e}")
+                    continue
+                for r in gt_recs:
+                    buckets[r['bucket']].append(r)
+                for r in bg_recs:
+                    buckets[r['bucket']].append(r)
+                for c, lst in pc_unk.items():
+                    per_cls_unk[c].extend(lst)
+
+                if (idx + 1) % 50 == 0:
+                    print(f"    ... {idx+1}/{len(img_ids)}")
+
+        buckets_by_regime[regime_label] = dict(buckets)
+        per_cls_unk_by_regime[regime_label] = dict(per_cls_unk)
+        skipped_by_regime[regime_label] = n_skipped
+        print(f"  [{regime_label}] done. skipped={n_skipped}. "
+              f"counts: "
+              + ', '.join(f"{b}={len(buckets.get(b, []))}" for b in
+                          ['true_base', 'true_novel', 'true_unknown',
+                           'background_pseudo_unknown']))
+
+    # ── Reporting ────────────────────────────────────────────────────────
+    for regime_label in ['A_fewshot_train', 'B_test']:
+        buckets = buckets_by_regime.get(regime_label, {})
+        if not buckets:
+            print(f"\n  [{regime_label}] no data, skipping report.")
+            continue
+        _ls_print_bucket_table(regime_label, buckets)
+        _ls_print_pairwise_auroc(regime_label, buckets)
+        _ls_waprpp_simulation(buckets)
+        _ls_per_class_unknown(
+            per_cls_unk_by_regime.get(regime_label, {}),
+            info['remaining_unknown'])
+
+    print(f"\n  Skipped images — "
+          + ', '.join(f"{k}={v}" for k, v in skipped_by_regime.items()))
+
+    if os.environ.get('VISUALIZE', '0') == '1':
+        _ls_visualize(buckets_by_regime, dataset_key, task)
+    else:
+        print(f"\n  To visualize, re-run with VISUALIZE=1 env var set")
+
+
 def main():
     args = parse_args()
     sections = set(args.sections)
@@ -1391,7 +1930,7 @@ def main():
     # Build T2 model only if needed by remaining phases
     needs_model = any(run(s) for s in ['forward', 'score_margin',
                                         'compactness', 'gradient',
-                                        'unknown_fate'])
+                                        'unknown_fate', 'logit_shape'])
     if not needs_model:
         print(f"\n{'='*70}")
         print("DIAGNOSTIC COMPLETE")
@@ -1408,7 +1947,8 @@ def main():
 
     # Phase 5-8: Need hooks for GT-level analysis
     needs_hooks = any(run(s) for s in ['score_margin', 'compactness',
-                                        'gradient', 'unknown_fate'])
+                                        'gradient', 'unknown_fate',
+                                        'logit_shape'])
     hooked, handles = None, []
     if needs_hooks:
         hooked, handles = setup_hooks(model.bbox_head.head_module)
@@ -1432,6 +1972,11 @@ def main():
     if run('unknown_fate') and task >= 2:
         section_unknown_fate(model, cfg, hooked, pipeline,
                              dataset_key, task)
+
+    # Phase 9: Logit-distribution shape separability
+    if run('logit_shape') and task >= 2:
+        section_logit_shape(model, hooked, pipeline,
+                            dataset_key, task, args.num_images)
 
     if handles:
         remove_hooks(handles)

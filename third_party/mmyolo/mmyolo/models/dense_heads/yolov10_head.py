@@ -566,6 +566,7 @@ class YOLOv10Head(BaseDenseHead):
         assigned_scores = assigned_result['assigned_scores']
         fg_mask_pre_prior = assigned_result['fg_mask_pre_prior']
 
+        _unknown_mask = None  # Track for KUME
         if self.anchor_label:
             if getattr(self, '_wapr_in_warmup', False):
                 pass  # WAPR warmup: skip gatekeeper, T_unk gets zero gradient
@@ -576,6 +577,7 @@ class YOLOv10Head(BaseDenseHead):
                 anchor_scores = flatten_cls_preds[:, :, -1].detach().sigmoid()
                 max_known_scores = flatten_cls_preds[:, :, :-2].detach().sigmoid().amax(dim=2)
                 unknown_mask = (overlaps.amax(dim=2) < anchor_iou_thresh) & (fg_mask_pre_prior == 0) & (anchor_scores > anchor_score_thresh) & (anchor_scores > max_known_scores)
+                _unknown_mask = unknown_mask  # Save for KUME
 
                 wapr = getattr(self, 'wapr', None)
                 cached = getattr(self.head_module, '_cached_cls_logits_one2many', None)
@@ -646,10 +648,27 @@ class YOLOv10Head(BaseDenseHead):
             loss_dfl = flatten_pred_bboxes.sum() * 0
         _, world_size = get_dist_info()
 
-        return dict(
+        losses = dict(
             one2many_loss_cls=loss_cls * num_imgs * world_size,
             one2many_loss_bbox=loss_bbox * num_imgs * world_size,
             one2many_loss_dfl=loss_dfl * num_imgs * world_size)
+
+        # [KUME] Known-Unknown Margin Enforcement
+        _kume = getattr(self, '_kume', None)
+        if _kume is not None and not getattr(self, '_wapr_in_warmup', False):
+            _kume_labels = assigned_scores.argmax(dim=-1)  # (B, N)
+            _wapr_mod = getattr(self, 'wapr', None)
+            _kume_w_r = getattr(_wapr_mod, '_last_w_r', None) if _wapr_mod is not None else None
+            kume_loss = _kume.compute(
+                flatten_cls_preds,       # (B, N, K) with grad
+                _kume_labels,            # (B, N)
+                fg_mask_pre_prior,       # (B, N) bool
+                _unknown_mask,           # (B, N) bool or None
+                wapr_w_r=_kume_w_r,      # (B, N) or None
+            )
+            losses['kume_loss'] = kume_loss
+
+        return losses
 
     def one2one_loss_by_feat(
             self,

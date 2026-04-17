@@ -6,7 +6,6 @@ using the model's own BNContrastiveHead logits for known classes:
   w_r = 1 - max_c sigmoid(logit_c)
 to:
   - Scale down the unknown target for anchors similar to known classes
-  - Mine novel class targets for anchors matching novel classes
   - Anchor T_unk with an L2 drift loss against its T1 value
 """
 
@@ -26,7 +25,6 @@ class WAPRModule:
       max_prob = max_c sigmoid(logit_c)     (how "known" this anchor looks)
       w_r = 1 - max_prob                    (low for known-like anchors)
       assigned_scores[b,r,-2] = w_r * anchor_scores[b,r]       (filtered unknown)
-      assigned_scores[b,r,c]  += (1-w_r) * anchor_scores[b,r]  (novel mining, c >= num_prev)
 
     Args:
         frozen_embedding_path: Path to .npy (kept for config compat, not used for sim).
@@ -100,34 +98,24 @@ class WAPRModule:
         # 4. Redistribution weight: high known prob → low w_r (redirect away from T_unk)
         w_r = (1.0 - max_prob).clamp(0.0, 1.0)  # (B, N)
 
+        # Save w_r for downstream consumers (e.g. KUME)
+        self._last_w_r = w_r.detach()
+
         # 5. Scale unknown target by w_r for gatekeeper-passing anchors
         assigned_scores[:, :, -2] = torch.where(
             unknown_mask,
             w_r * anchor_scores,
             assigned_scores[:, :, -2])
 
-        # 6. Novel mining: add soft targets for novel class matches
-        novel_mining_mask = unknown_mask & (best_class >= self.num_prev_classes)
-        num_redirected = 0
-        if novel_mining_mask.any():
-            mining_scores = (1.0 - w_r) * anchor_scores  # (B, N)
-            # Zero out non-mining positions
-            mining_scores = torch.where(
-                novel_mining_mask, mining_scores, torch.zeros_like(mining_scores))
-            # Scatter add into the matched novel class channel
-            idx = best_class.unsqueeze(-1)  # (B, N, 1)
-            assigned_scores.scatter_add_(2, idx, mining_scores.unsqueeze(-1).to(assigned_scores.dtype))
-            num_redirected = int(novel_mining_mask.sum().item())
-
-        # 7. Collect stats for logging
+        # 6. Collect stats for logging
         num_candidates = int(unknown_mask.sum().item())
         w_r_masked = w_r[unknown_mask]
         max_prob_masked = max_prob[unknown_mask]
         return {
             'wapr/mean_w_r': float(w_r_masked.mean().item()) if num_candidates > 0 else 0.0,
             'wapr/mean_max_prob': float(max_prob_masked.mean().item()) if num_candidates > 0 else 0.0,
-            'wapr/num_redirected': num_redirected,
-            'wapr/num_genuine_unk': num_candidates - num_redirected,
+            'wapr/num_redirected': 0,
+            'wapr/num_genuine_unk': num_candidates,
             'wapr/num_candidates': num_candidates,
         }
 
