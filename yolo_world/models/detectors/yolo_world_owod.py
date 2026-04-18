@@ -96,12 +96,13 @@ class OWODDetector(YOLODetector):
                     'num_known_classes', num_train_classes - 2),
                 warmup_epochs=wapr.get('warmup_epochs', 2),
                 anchor_loss_weight=wapr.get('anchor_loss_weight', 0.1),
+                ratio_threshold=wapr.get('ratio_threshold', 0.5),
             )
             self.bbox_head.wapr = self.wapr
-            print(f"[WAPR] Initialized: num_known={self.wapr.num_known_classes}, "
-                  f"num_prev={self.wapr.num_prev_classes}, "
+            print(f"[WAPR] Initialized: "
                   f"warmup={self.wapr.warmup_epochs} epochs, "
-                  f"anchor_weight={self.wapr.anchor_loss_weight}")
+                  f"anchor_weight={self.wapr.anchor_loss_weight}, "
+                  f"ratio_threshold={self.wapr.ratio_threshold}")
 
         # GADL: GT-Anchored Discriminative Loss (T2 only)
         self.gadl = None
@@ -190,9 +191,10 @@ class OWODDetector(YOLODetector):
                       f"warmup={'Y' if warmup else 'N'} "
                       f"anchor_loss={anchor_loss.item():.8f} "
                       f"candidates={wapr_stats.get('wapr/num_candidates', 0)} "
-                      f"redirected={wapr_stats.get('wapr/num_redirected', 0)} "
+                      f"suppressed={wapr_stats.get('wapr/num_suppressed', 0)} "
                       f"genuine_unk={wapr_stats.get('wapr/num_genuine_unk', 0)} "
-                      f"mean_max_prob={wapr_stats.get('wapr/mean_max_prob', 0):.4f} "
+                      f"mean_ratio={wapr_stats.get('wapr/mean_ratio', 0):.4f} "
+                      f"std_ratio={wapr_stats.get('wapr/std_ratio', 0):.4f} "
                       f"mean_w_r={wapr_stats.get('wapr/mean_w_r', 0):.4f}")
             else:
                 print(f"[WAPR] epoch={epoch} "

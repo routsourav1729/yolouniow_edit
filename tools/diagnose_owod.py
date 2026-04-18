@@ -186,9 +186,10 @@ def remove_hooks(handles):
         h.remove()
 
 
-def extract_at_box(hooked, bbox_scaled, use_bn=True):
+def extract_at_box(hooked, bbox_scaled, use_bn=True, batch_idx=0):
     """Extract BN feature + logit at box center from hooked outputs.
     bbox_scaled = (x1, y1, x2, y2) in resized+padded coords.
+    batch_idx: which image in the batch to extract from (default 0).
     Returns (feat_512, logit_K) or (None, None)."""
     x1, y1, x2, y2 = bbox_scaled
     cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
@@ -201,14 +202,14 @@ def extract_at_box(hooked, bbox_scaled, use_bn=True):
     if feat_key not in hooked or logit_key not in hooked:
         return None, None
 
-    feat_map = hooked[feat_key]    # (1, 512, H, W)
-    logit_map = hooked[logit_key]  # (1, K, H, W)
+    feat_map = hooked[feat_key]    # (B, 512, H, W)
+    logit_map = hooked[logit_key]  # (B, K, H, W)
 
     _, C, H, W = feat_map.shape
     gx = max(0, min(int(cx / stride), W - 1))
     gy = max(0, min(int(cy / stride), H - 1))
 
-    return feat_map[0, :, gy, gx], logit_map[0, :, gy, gx]
+    return feat_map[batch_idx, :, gy, gx], logit_map[batch_idx, :, gy, gx]
 
 
 def load_and_preprocess_image(img_path, pipeline):
@@ -1402,6 +1403,18 @@ def _ls_compute_stats(known_probs_np, probs_np):
     )
 
 
+def _ls_energy(raw_logits_known):
+    """Free-energy OOD score over known-class raw logits (Liu et al., NeurIPS 2020).
+    E(x) = -T * log(sum(exp(logit_c / T))), T=1.
+    More negative = more in-distribution (high-density). Less negative / positive = OOD."""
+    if isinstance(raw_logits_known, torch.Tensor):
+        return -torch.logsumexp(raw_logits_known.float(), dim=0).item()
+    # numpy path (log-sum-exp trick for numerical stability)
+    v = np.asarray(raw_logits_known, dtype=np.float64)
+    max_v = v.max()
+    return -float(max_v + np.log(np.sum(np.exp(v - max_v))))
+
+
 def _ls_auroc(pos_scores, neg_scores):
     """Rank-based AUROC. pos=higher class, neg=lower class."""
     pos = np.asarray(pos_scores, dtype=np.float64)
@@ -1458,7 +1471,7 @@ def _ls_print_bucket_table(regime_label, buckets):
     print(f"{'='*70}")
     stat_keys = ['max_known', 'top1_minus_top2', 'entropy',
                  'variance', 'top3_ratio', 'anchor_score',
-                 'tunk_score', 'wapr_ratio']
+                 'tunk_score', 'wapr_ratio', 'energy']
     bucket_order = ['true_base', 'true_novel', 'true_unknown',
                     'background_pseudo_unknown']
     for sk in stat_keys:
@@ -1492,7 +1505,7 @@ def _ls_print_pairwise_auroc(regime_label, buckets):
     ]
     stat_keys = ['max_known', 'top1_minus_top2', 'entropy',
                  'variance', 'top3_ratio', 'wapr_ratio',
-                 'anchor_score', 'tunk_score']
+                 'anchor_score', 'tunk_score', 'energy']
     for pos, neg in pairs:
         pos_recs = buckets.get(pos, [])
         neg_recs = buckets.get(neg, [])
@@ -1540,6 +1553,37 @@ def _ls_waprpp_simulation(buckets):
     rules.append(('Combined (ratio<0.5 OR entropy>0.7)',
                   lambda r: (r['wapr_ratio'] < 0.5) or (r['entropy'] > 0.7)))
 
+    # ── Energy-based and intersection rules ──────────────────────────────
+    tu_for_thresh = buckets.get('true_unknown', [])
+    tu_energies = np.array([r['energy'] for r in tu_for_thresh
+                            if r is not None and 'energy' in r],
+                           dtype=np.float64)
+    if tu_energies.size > 0:
+        e_p25 = float(np.percentile(tu_energies, 25))
+        e_p50 = float(np.percentile(tu_energies, 50))
+        e_p75 = float(np.percentile(tu_energies, 75))
+        print(f"  Energy thresholds from true_unknown distribution: "
+              f"p25={e_p25:.4f}  p50={e_p50:.4f}  p75={e_p75:.4f}")
+        for label, tau in [('p25', e_p25), ('p50', e_p50), ('p75', e_p75)]:
+            rules.append(
+                (f'Energy gate \u03c4={tau:.4f} ({label})',
+                 (lambda t: (lambda r: r.get('energy', float('-inf')) > t))(tau)))
+        rules.append(
+            (f'Intersect (ratio<0.5 AND energy>{e_p50:.2f})',
+             lambda r: (r['wapr_ratio'] < 0.5) and
+                       (r.get('energy', float('-inf')) > e_p50)))
+        rules.append(
+            (f'Intersect (ratio<0.5 AND ent>0.7 AND e>{e_p50:.2f})',
+             lambda r: (r['wapr_ratio'] < 0.5) and
+                       (r['entropy'] > 0.7) and
+                       (r.get('energy', float('-inf')) > e_p50)))
+        rules.append(
+            (f'Union (ratio<0.5 OR energy>{e_p50:.2f})',
+             lambda r: (r['wapr_ratio'] < 0.5) or
+                       (r.get('energy', float('-inf')) > e_p50)))
+    else:
+        print(f"  [WARN] No true_unknown energy values — skipping energy rules")
+
     tu = buckets.get('true_unknown', [])
     bg = buckets.get('background_pseudo_unknown', [])
     tb = buckets.get('true_base', [])
@@ -1580,6 +1624,95 @@ def _ls_per_class_unknown(per_cls_records, remaining_unknown):
               f"{mar:10.4f} | {wr:12.4f}")
 
 
+def _ls_energy_redundancy_check(regime_label, buckets):
+    """Check whether energy provides signal beyond entropy/max_known."""
+    print(f"\n{'='*70}")
+    print(f"ENERGY vs ENTROPY REDUNDANCY CHECK — {regime_label}")
+    print(f"{'='*70}")
+
+    tu = buckets.get('true_unknown', [])
+    bg = buckets.get('background_pseudo_unknown', [])
+    combined = [r for r in tu + bg if r is not None and 'energy' in r]
+    if len(combined) < 5:
+        print(f"  [SKIP] Too few samples with energy ({len(combined)})")
+        return
+
+    energy = np.array([r['energy'] for r in combined], dtype=np.float64)
+    entropy = np.array([r['entropy'] for r in combined], dtype=np.float64)
+    max_known = np.array([r['max_known'] for r in combined], dtype=np.float64)
+
+    # Pearson correlation
+    def _pearsonr(x, y):
+        """Pearson correlation (numpy fallback)."""
+        try:
+            from scipy.stats import pearsonr
+            r, p = pearsonr(x, y)
+            return r, p
+        except ImportError:
+            pass
+        n = len(x)
+        if n < 3:
+            return float('nan'), float('nan')
+        mx, my = x.mean(), y.mean()
+        dx, dy = x - mx, y - my
+        num = (dx * dy).sum()
+        den = np.sqrt((dx ** 2).sum() * (dy ** 2).sum())
+        if den < 1e-15:
+            return float('nan'), float('nan')
+        r = float(num / den)
+        # two-sided p-value approximation
+        t_stat = r * np.sqrt((n - 2) / max(1 - r ** 2, 1e-15))
+        try:
+            from scipy.stats import t as t_dist
+            p = float(2.0 * t_dist.sf(abs(t_stat), n - 2))
+        except ImportError:
+            p = float('nan')
+        return r, p
+
+    r_ee, p_ee = _pearsonr(energy, entropy)
+    r_em, p_em = _pearsonr(energy, max_known)
+    print(f"  Pearson(energy, entropy)   = {r_ee:+.4f}  (p={p_ee:.2e})")
+    print(f"  Pearson(energy, max_known) = {r_em:+.4f}  (p={p_em:.2e})")
+
+    # Marginal AUROC gain: entropy alone vs max(rank(energy), rank(entropy))
+    tu_e = [r for r in tu if r is not None and 'energy' in r]
+    bg_e = [r for r in bg if r is not None and 'energy' in r]
+    if len(tu_e) >= 2 and len(bg_e) >= 2:
+        # Entropy alone
+        auc_ent = _ls_auroc(
+            [r['entropy'] for r in tu_e],
+            [r['entropy'] for r in bg_e])
+
+        # Combined score: rank-normalize energy and entropy, take max
+        all_recs = tu_e + bg_e
+        ent_arr = np.array([r['entropy'] for r in all_recs])
+        eng_arr = np.array([r['energy'] for r in all_recs])
+        # rank-normalize to [0,1]
+        def _rank_norm(v):
+            order = v.argsort().argsort().astype(np.float64)
+            return order / max(order.max(), 1.0)
+        ent_rn = _rank_norm(ent_arr)
+        eng_rn = _rank_norm(eng_arr)
+        combined_score = np.maximum(ent_rn, eng_rn)
+        n_tu = len(tu_e)
+        auc_comb = _ls_auroc(
+            combined_score[:n_tu].tolist(),
+            combined_score[n_tu:].tolist())
+
+        delta = auc_comb - auc_ent
+        print(f"\n  AUROC (true_unknown vs bg) with entropy alone:     {auc_ent:.4f}")
+        print(f"  AUROC with max(rank_energy, rank_entropy):         {auc_comb:.4f}")
+        print(f"  Marginal AUROC delta (combined - entropy):         {delta:+.4f}")
+        if abs(delta) < 0.01:
+            print(f"  -> Energy appears REDUNDANT with entropy (delta < 0.01)")
+        elif delta > 0.01:
+            print(f"  -> Energy provides ADDITIONAL signal beyond entropy")
+        else:
+            print(f"  -> Combining energy HURTS vs entropy alone")
+    else:
+        print(f"  [SKIP] Insufficient tu/bg samples for marginal AUROC")
+
+
 def _ls_visualize(buckets_by_regime, dataset_key, task):
     try:
         import matplotlib
@@ -1598,7 +1731,7 @@ def _ls_visualize(buckets_by_regime, dataset_key, task):
         out_dir = os.path.join(base_dir, f'{stem}_{n}')
         n += 1
     os.makedirs(out_dir, exist_ok=True)
-    stats = ['entropy', 'top1_minus_top2', 'variance', 'top3_ratio']
+    stats = ['entropy', 'top1_minus_top2', 'variance', 'top3_ratio', 'energy']
     bucket_order = ['true_base', 'true_novel', 'true_unknown',
                     'background_pseudo_unknown']
     for regime, buckets in buckets_by_regime.items():
@@ -1648,105 +1781,173 @@ def _ls_iou_xyxy(a, B):
     return iou
 
 
-def _ls_process_image(model, hooked, pipeline, img_path, full_objs,
-                      n_known, t1_set, t2_novel_set, unk_set,
-                      bg_sample_cap=20, rng=None):
-    """Single forward pass. Returns (gt_records_list, bg_records_list,
-    per_cls_unk_records_dict). Each record is per-sample stats dict plus
-    a 'gt_name' field (bg records have gt_name='__bg__')."""
-    import torch as _t
-    img_tensor, ds, sf, pp = load_and_preprocess_image(img_path, pipeline)
-    # one forward pass populates hooked for all FPN levels
-    model.bbox_head.head_module.forward_one2one(
-        *model.extract_feat(img_tensor, [ds]))
+def _ls_iou_xyxy_many(anchors, gt_boxes):
+    """Vectorized IoU: anchors (M,4), gt_boxes (N,4) → (M,) max IoU over GT.
+    All numpy, no Python loop over anchors."""
+    if gt_boxes.shape[0] == 0:
+        return np.zeros(len(anchors), dtype=np.float64)
+    # anchors: (M,4), gt_boxes: (N,4) → broadcast to (M,N)
+    A = anchors[:, None, :]   # (M, 1, 4)
+    B = gt_boxes[None, :, :]  # (1, N, 4)
+    xx1 = np.maximum(A[:, :, 0], B[:, :, 0])
+    yy1 = np.maximum(A[:, :, 1], B[:, :, 1])
+    xx2 = np.minimum(A[:, :, 2], B[:, :, 2])
+    yy2 = np.minimum(A[:, :, 3], B[:, :, 3])
+    iw = np.clip(xx2 - xx1, 0, None)
+    ih = np.clip(yy2 - yy1, 0, None)
+    inter = iw * ih  # (M, N)
+    area_a = np.clip(anchors[:, 2] - anchors[:, 0], 0, None) * \
+             np.clip(anchors[:, 3] - anchors[:, 1], 0, None)  # (M,)
+    area_b = np.clip(gt_boxes[:, 2] - gt_boxes[:, 0], 0, None) * \
+             np.clip(gt_boxes[:, 3] - gt_boxes[:, 1], 0, None)  # (N,)
+    union = area_a[:, None] + area_b[None, :] - inter  # (M, N)
+    iou = np.where(union > 0, inter / np.maximum(union, 1e-8), 0.0)
+    return iou.max(axis=1)  # (M,) max over GT boxes
 
-    gt_records = []
-    per_cls_unk = defaultdict(list)
 
-    # GT boxes: use full XML (contamination-aware)
-    for obj in full_objs:
-        bucket = _ls_bucket_of(obj['name'], t1_set, t2_novel_set, unk_set)
-        if bucket is None:
-            continue
-        sb = scale_box(obj['bbox'], sf, pp)
-        _, logit_vec = extract_at_box(hooked, sb, use_bn=True)
-        if logit_vec is None:
-            continue
-        probs = logit_vec.sigmoid().cpu().numpy()
-        known_np = probs[:n_known]
-        stats = _ls_compute_stats(known_np, probs)
-        if stats is None:
-            continue
-        stats['bucket'] = bucket
-        stats['gt_name'] = obj['name']
-        gt_records.append(stats)
-        if bucket == 'true_unknown':
-            per_cls_unk[obj['name']].append(stats)
+def _ls_bg_anchors_for_item(hooked, batch_idx, n_known, sf, pp, all_gt,
+                            bg_sample_cap, rng):
+    """Extract background pseudo-unknown anchor records for one image in a batch.
 
-    # Background pseudo-unknown anchors
-    bg_records = []
-    if full_objs:
-        all_gt = np.array([o['bbox'] for o in full_objs], dtype=np.float64)
-    else:
-        all_gt = np.zeros((0, 4), dtype=np.float64)
+    Uses vectorized IoU (_ls_iou_xyxy_many) instead of a Python loop — all
+    gatekeeper-passing anchors across all FPN levels are collected first, then
+    IoU-filtered in one numpy broadcast call per level.
 
-    candidate_list = []  # (cx, cy, level, k_vec, probs_vec)
+    Returns list of stats dicts (bucket='background_pseudo_unknown').
+    """
+    candidate_probs = []  # list of (K,) numpy arrays
+    candidate_raw = []    # list of (K,) numpy arrays (raw pre-sigmoid logits)
+
     for lvl in range(len(FPN_STRIDES)):
         logit_key = f'cls_logit_{lvl}'
         if logit_key not in hooked:
             continue
-        logit_map = hooked[logit_key]  # (1,K,H,W)
-        K = logit_map.shape[1]
+        logit_map = hooked[logit_key]  # (B, K, H, W)
+        _, K, H, W = logit_map.shape
         stride = FPN_STRIDES[lvl]
-        flat = logit_map[0].permute(1, 2, 0).reshape(-1, K)  # (H*W, K)
+
+        flat = logit_map[batch_idx].permute(1, 2, 0).reshape(-1, K)  # (H*W, K)
         probs = flat.sigmoid()
         known_probs = probs[:, :n_known]
         max_known, _ = known_probs.max(dim=1)
-        anchor = probs[:, -1]
-        gk_mask = (anchor > 0.01) & (anchor > max_known)
+        anchor_p = probs[:, -1]
+        gk_mask = (anchor_p > 0.01) & (anchor_p > max_known)
         if not gk_mask.any():
             continue
-        idxs = gk_mask.nonzero(as_tuple=False).flatten().cpu().numpy()
-        H = logit_map.shape[2]
-        W = logit_map.shape[3]
-        probs_cpu = probs[gk_mask].cpu().numpy()
-        for row_local, flat_idx in enumerate(idxs):
-            gy = flat_idx // W
-            gx = flat_idx % W
-            cx = (gx + 0.5) * stride
-            cy = (gy + 0.5) * stride
-            # approx anchor box: cell-sized, for IoU check only
-            half = stride / 2.0
-            ab = np.array([cx - half, cy - half,
-                           cx + half, cy + half], dtype=np.float64)
-            # scale anchor-box back to original image coords for IoU vs GT
-            # GT boxes are in ORIGINAL image coords; anchor is in padded coords
-            # So we undo pad+scale: orig = (padded - pad_left) / scale
-            ox1 = (ab[0] - pp[2]) / max(sf[0], 1e-8)
-            oy1 = (ab[1] - pp[0]) / max(sf[1], 1e-8)
-            ox2 = (ab[2] - pp[2]) / max(sf[0], 1e-8)
-            oy2 = (ab[3] - pp[0]) / max(sf[1], 1e-8)
-            orig_ab = np.array([ox1, oy1, ox2, oy2], dtype=np.float64)
-            if all_gt.shape[0] > 0:
-                ious = _ls_iou_xyxy(orig_ab, all_gt)
-                if ious.max() >= 0.3:
-                    continue
-            candidate_list.append(probs_cpu[row_local])
 
-    if candidate_list:
-        if rng is not None and len(candidate_list) > bg_sample_cap:
-            sel = rng.choice(len(candidate_list), bg_sample_cap, replace=False)
-            candidate_list = [candidate_list[i] for i in sel]
-        for p_np in candidate_list:
-            known_np = p_np[:n_known]
-            stats = _ls_compute_stats(known_np, p_np)
+        idxs = gk_mask.nonzero(as_tuple=False).flatten().cpu().numpy()  # (M,)
+        probs_cpu = probs[gk_mask].cpu().numpy()  # (M, K)
+        raw_cpu = flat[gk_mask].cpu().numpy()      # (M, K) raw logits
+
+        # Build anchor boxes in original-image coords (vectorized)
+        gy = idxs // W
+        gx = idxs % W
+        cx = (gx + 0.5) * stride
+        cy = (gy + 0.5) * stride
+        half = stride / 2.0
+        # undo pad+scale to get original image coords
+        ox1 = (cx - half - pp[2]) / max(sf[0], 1e-8)
+        oy1 = (cy - half - pp[0]) / max(sf[1], 1e-8)
+        ox2 = (cx + half - pp[2]) / max(sf[0], 1e-8)
+        oy2 = (cy + half - pp[0]) / max(sf[1], 1e-8)
+        anchor_boxes = np.stack([ox1, oy1, ox2, oy2], axis=1)  # (M, 4)
+
+        # Vectorized IoU filter: keep anchors with max_iou < 0.3
+        if all_gt.shape[0] > 0:
+            max_iou = _ls_iou_xyxy_many(anchor_boxes, all_gt)  # (M,)
+            keep = max_iou < 0.3
+            probs_cpu = probs_cpu[keep]
+            raw_cpu = raw_cpu[keep]
+
+        candidate_probs.extend(probs_cpu)
+        candidate_raw.extend(raw_cpu)
+
+    if not candidate_probs:
+        return []
+
+    if rng is not None and len(candidate_probs) > bg_sample_cap:
+        sel = rng.choice(len(candidate_probs), bg_sample_cap, replace=False)
+        candidate_probs = [candidate_probs[i] for i in sel]
+        candidate_raw = [candidate_raw[i] for i in sel]
+
+    bg_records = []
+    for p_np, raw_np in zip(candidate_probs, candidate_raw):
+        known_np = p_np[:n_known]
+        stats = _ls_compute_stats(known_np, p_np)
+        if stats is None:
+            continue
+        stats['energy'] = _ls_energy(raw_np[:n_known])
+        stats['bucket'] = 'background_pseudo_unknown'
+        stats['gt_name'] = '__bg__'
+        bg_records.append(stats)
+    return bg_records
+
+
+def _ls_process_batch(model, hooked, pipeline, batch_items,
+                      n_known, t1_set, t2_novel_set, unk_set,
+                      bg_sample_cap=20, rng=None):
+    """Batched forward pass over a list of (img_path, full_objs) pairs.
+
+    Stacks all images into one tensor, runs one forward pass (filling hooked
+    with (B,K,H,W) tensors), then extracts records per image using batch_idx.
+
+    Returns:
+        all_gt_records  — list of gt stats dicts across all images
+        all_bg_records  — list of bg stats dicts across all images
+        per_cls_unk     — defaultdict(list) of unknown-class stats dicts
+    """
+    # ── preprocess all images in the batch ──────────────────────────────
+    tensors, meta = [], []
+    for img_path, _ in batch_items:
+        img_tensor, ds, sf, pp = load_and_preprocess_image(img_path, pipeline)
+        tensors.append(img_tensor)          # (1, C, H, W)
+        meta.append((ds, sf, pp))
+
+    batch_tensor = torch.cat(tensors, dim=0)  # (B, C, H, W)
+    batch_ds = [m[0] for m in meta]
+
+    # ── single forward pass ─────────────────────────────────────────────
+    model.bbox_head.head_module.forward_one2one(
+        *model.extract_feat(batch_tensor, batch_ds))
+
+    # ── extract records per image ────────────────────────────────────────
+    all_gt_records = []
+    all_bg_records = []
+    per_cls_unk = defaultdict(list)
+
+    for bidx, (img_path, full_objs) in enumerate(batch_items):
+        _, sf, pp = meta[bidx]
+
+        # GT records
+        for obj in full_objs:
+            bucket = _ls_bucket_of(obj['name'], t1_set, t2_novel_set, unk_set)
+            if bucket is None:
+                continue
+            sb = scale_box(obj['bbox'], sf, pp)
+            _, logit_vec = extract_at_box(hooked, sb, use_bn=True,
+                                          batch_idx=bidx)
+            if logit_vec is None:
+                continue
+            probs = logit_vec.sigmoid().cpu().numpy()
+            known_np = probs[:n_known]
+            stats = _ls_compute_stats(known_np, probs)
             if stats is None:
                 continue
-            stats['bucket'] = 'background_pseudo_unknown'
-            stats['gt_name'] = '__bg__'
-            bg_records.append(stats)
+            stats['energy'] = _ls_energy(logit_vec[:n_known])
+            stats['bucket'] = bucket
+            stats['gt_name'] = obj['name']
+            all_gt_records.append(stats)
+            if bucket == 'true_unknown':
+                per_cls_unk[obj['name']].append(stats)
 
-    return gt_records, bg_records, per_cls_unk
+        # Background pseudo-unknown records (vectorized IoU)
+        all_gt_boxes = (np.array([o['bbox'] for o in full_objs], dtype=np.float64)
+                        if full_objs else np.zeros((0, 4), dtype=np.float64))
+        bg_recs = _ls_bg_anchors_for_item(
+            hooked, bidx, n_known, sf, pp, all_gt_boxes, bg_sample_cap, rng)
+        all_bg_records.extend(bg_recs)
+
+    return all_gt_records, all_bg_records, per_cls_unk
 
 
 def section_logit_shape(model, hooked, pipeline, dataset_key, task, n_imgs):
@@ -1816,30 +2017,42 @@ def section_logit_shape(model, hooked, pipeline, dataset_key, task, n_imgs):
         buckets = defaultdict(list)
         per_cls_unk = defaultdict(list)
         n_skipped = 0
+        BATCH_SIZE = 8
 
-        print(f"\n  [{regime_label}] processing {len(img_ids)} images...")
+        print(f"\n  [{regime_label}] processing {len(img_ids)} images "
+              f"(batch_size={BATCH_SIZE})...")
 
+        # ── pre-load all valid (img_path, full_objs) pairs ───────────────
+        valid_items = []   # list of (img_id, img_path, full_objs)
+        for img_id in img_ids:
+            xml_path = os.path.join(ann_dir, img_id + '.xml')
+            img_path = os.path.join(img_dir, img_id + '.jpg')
+            if not os.path.exists(xml_path) or not os.path.exists(img_path):
+                n_skipped += 1
+                continue
+            try:
+                full_objs = parse_voc_xml(xml_path)
+            except Exception:
+                n_skipped += 1
+                continue
+            valid_items.append((img_id, img_path, full_objs))
+
+        # ── process in batches ────────────────────────────────────────────
+        n_done = 0
         with torch.no_grad():
-            for idx, img_id in enumerate(img_ids):
-                xml_path = os.path.join(ann_dir, img_id + '.xml')
-                img_path = os.path.join(img_dir, img_id + '.jpg')
-                if not os.path.exists(xml_path) or not os.path.exists(img_path):
-                    n_skipped += 1
-                    continue
+            for batch_start in range(0, len(valid_items), BATCH_SIZE):
+                batch = valid_items[batch_start:batch_start + BATCH_SIZE]
+                batch_pairs = [(ip, fo) for _, ip, fo in batch]
+                batch_ids = [iid for iid, _, _ in batch]
                 try:
-                    full_objs = parse_voc_xml(xml_path)
-                except Exception:
-                    n_skipped += 1
-                    continue
-                try:
-                    gt_recs, bg_recs, pc_unk = _ls_process_image(
-                        model, hooked, pipeline, img_path, full_objs,
+                    gt_recs, bg_recs, pc_unk = _ls_process_batch(
+                        model, hooked, pipeline, batch_pairs,
                         n_known, t1_set, t2_novel_set, unk_set,
                         bg_sample_cap=20, rng=bg_rng)
                 except Exception as e:
-                    n_skipped += 1
-                    if n_skipped <= 3:
-                        print(f"    [warn] img {img_id} failed: {e}")
+                    n_skipped += len(batch)
+                    if n_skipped <= 3 * BATCH_SIZE:
+                        print(f"    [warn] batch {batch_ids} failed: {e}")
                     continue
                 for r in gt_recs:
                     buckets[r['bucket']].append(r)
@@ -1847,9 +2060,9 @@ def section_logit_shape(model, hooked, pipeline, dataset_key, task, n_imgs):
                     buckets[r['bucket']].append(r)
                 for c, lst in pc_unk.items():
                     per_cls_unk[c].extend(lst)
-
-                if (idx + 1) % 50 == 0:
-                    print(f"    ... {idx+1}/{len(img_ids)}")
+                n_done += len(batch)
+                if n_done % 50 < BATCH_SIZE:
+                    print(f"    ... {n_done}/{len(valid_items)}")
 
         buckets_by_regime[regime_label] = dict(buckets)
         per_cls_unk_by_regime[regime_label] = dict(per_cls_unk)
@@ -1872,6 +2085,7 @@ def section_logit_shape(model, hooked, pipeline, dataset_key, task, n_imgs):
         _ls_per_class_unknown(
             per_cls_unk_by_regime.get(regime_label, {}),
             info['remaining_unknown'])
+        _ls_energy_redundancy_check(regime_label, buckets)
 
     print(f"\n  Skipped images — "
           + ', '.join(f"{k}={v}" for k, v in skipped_by_regime.items()))

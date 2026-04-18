@@ -35,7 +35,7 @@ custom_hooks = [
          switch_pipeline={{_base_.train_pipeline_stage2}})
 ]
 
-# KUME: Known-Unknown Margin Enforcement (no WAPR in this baseline)
+# KUME: Known-Unknown Margin Enforcement + WAPR together.
 # IDD: 8 base + 6 novel = 14 total known classes.
 # T_unk is at index 14 in the (K+2) logit tensor.
 # Margin in logit space: logit_unk must be at least m below correct class
@@ -46,5 +46,12 @@ model = dict(
         unk_idx=14,             # absolute index of T_unk in K+2 logit tensor
         margin=1.0,             # logit-space separation margin
         weight=0.5,             # loss weight
+    ),
+    wapr=dict(
+        frozen_embedding_path='embeddings/uniow-idd/idd_t2.npy',
+        num_known_classes=14,
+        warmup_epochs=1,
+        anchor_loss_weight=0.05,
+        ratio_threshold=0.5,
     ),
 )

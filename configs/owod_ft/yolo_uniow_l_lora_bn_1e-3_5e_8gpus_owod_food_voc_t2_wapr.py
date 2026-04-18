@@ -39,5 +39,6 @@ model = dict(
         num_known_classes=15,
         warmup_epochs=1,
         anchor_loss_weight=0.05,
+        ratio_threshold=0.5,
     ),
 )

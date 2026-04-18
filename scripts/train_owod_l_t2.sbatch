@@ -28,8 +28,9 @@
 # Optional arguments:
 #   --shot K              Number of shots per novel class (default: 10)
 #   --seed S              Fewshot seed index (default: 1)
-#   --wapr                Enable WAPR config/work-dir variant for T2
-#   --kume                Enable KUME (Known-Unknown Margin Enforcement) for T2
+#   --wapr                Enable WAPR only
+#   --kume                Enable KUME only
+#   --wapr-kume           Enable both WAPR and KUME together (uses kume config which includes wapr dict)
 #   --gpus N              Number of GPUs (default: SLURM_GPUS_ON_NODE or 1)
 #   --threshold T         Detection threshold (default: 0.05)
 #   --config PATH         Override T2 config file path
@@ -54,13 +55,14 @@ while [[ $# -gt 0 ]]; do
         --seed)       FEWSHOT_SEED="$2"; shift 2 ;;
         --wapr)       USE_WAPR=1; shift 1 ;;
         --kume)       USE_KUME=1; shift 1 ;;
+        --wapr-kume)  USE_WAPR=1; USE_KUME=1; shift 1 ;;
         --gpus)       NUM_GPUS="$2"; shift 2 ;;
         --threshold)  THRESHOLD="$2"; shift 2 ;;
         --config)     CONFIG_OVERRIDE="$2"; shift 2 ;;
         --t1-ckpt)    T1_CKPT_OVERRIDE="$2"; shift 2 ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: sbatch scripts/train_owod_l_t2.sbatch --dataset DATASET [--shot K] [--seed S] [--wapr|--kume] [--gpus N] [--threshold T] [--config PATH] [--t1-ckpt PATH]"
+            echo "Usage: sbatch scripts/train_owod_l_t2.sbatch --dataset DATASET [--shot K] [--seed S] [--wapr|--kume|--wapr-kume] [--gpus N] [--threshold T] [--config PATH] [--t1-ckpt PATH]"
             exit 1
             ;;
     esac
@@ -96,6 +98,7 @@ case $DATASET in
         if [ -n "$CONFIG_OVERRIDE" ]; then
             CONFIG="$CONFIG_OVERRIDE"
         elif [ "$USE_KUME" -eq 1 ]; then
+            # kume config now includes wapr dict — covers both --kume and --wapr --kume
             CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2_kume.py
         elif [ "$USE_WAPR" -eq 1 ]; then
             CONFIG=configs/owod_ft/${STEM}_idd_wapr.py
@@ -146,7 +149,9 @@ fi
 
 # T2 directories
 METHOD_SUFFIX=""
-if [ "$USE_KUME" -eq 1 ]; then
+if [ "$USE_KUME" -eq 1 ] && [ "$USE_WAPR" -eq 1 ]; then
+    METHOD_SUFFIX="_wapr_kume"
+elif [ "$USE_KUME" -eq 1 ]; then
     METHOD_SUFFIX="_kume"
 elif [ "$USE_WAPR" -eq 1 ]; then
     METHOD_SUFFIX="_wapr"
