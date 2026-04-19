@@ -15,24 +15,23 @@
 # Universal OWOD Diagnostic
 #
 # Usage:
-#   sbatch scripts/diagnose_owod.sbatch --dataset IDD --task 2 [--checkpoint /path/to/ckpt]
-#   sbatch scripts/diagnose_owod.sbatch --dataset FOOD_VOCCOCO --task 2
-#   sbatch scripts/diagnose_owod.sbatch --dataset FOOD_VOC --task 2
+#   sbatch scripts/diagnose_owod.sbatch --dataset IDD --task 2
+#   sbatch scripts/diagnose_owod.sbatch --dataset IDD --task 2 --method wapr-kume
+#   sbatch scripts/diagnose_owod.sbatch --dataset IDD --task 2 --checkpoint /path/to/ckpt
+#   sbatch scripts/diagnose_owod.sbatch --dataset FOOD_VOCCOCO --task 2 --method wapr
 #
 # Options:
 #   --dataset         IDD | FOOD_VOCCOCO | FOOD_VOC
 #   --task            1 | 2
-#   --checkpoint      Override checkpoint (default: auto-detect T1 best for T2 diag)
-#   --config          Override config (default: auto-detect)
-#   --num-images      Number of val images (default: 50)
-#   --t1-on-t2        Evaluate T1 ckpt on T2 config (diag mode)
-#   --sections        Subset: embedding visual_centroid tunk_proximity
-#                              forward score_margin compactness gradient
-#                              unknown_fate logit_shape  (default: all)
-#
-# Environment overrides:
-#   VISUALIZE=1       For logit_shape section, also save overlay histograms
-#   FEWSHOT_K / FEWSHOT_SEED  (defaults: 10 / 1)
+#   --method          baseline | wapr | kume | wapr-kume  (default: wapr-kume)
+#                     Selects config and work_dir suffix, matches train_owod_l_t2.sbatch
+#   --checkpoint      Override checkpoint path (default: auto-detect best in method work_dir)
+#   --config          Override config file path
+#   --shot            Few-shot K (default: 10)
+#   --seed            Few-shot seed (default: 1)
+#   --out-dir         Output directory for results (default: <work_dir>/diagnose)
+#   --num-images      Number of images to process (default: all)
+#   --thresholds      Comma-separated ratio thresholds (default: 0.3,0.4,0.5,0.6,0.7,0.8,0.9)
 # ============================================================================
 
 source /home/agipml/sourav.rout/miniconda3/bin/activate yolouniow
@@ -54,69 +53,90 @@ mkdir -p slurm_logs/{idd,voccoco,voc,analysis}
 # ─── Parse arguments ──────────────────────────────────────────────────────
 DATASET="IDD"
 TASK=2
+METHOD="wapr-kume"
 CKPT=""
 CONFIG=""
+FEWSHOT_K=10
+FEWSHOT_SEED=1
+OUT_DIR_OVERRIDE=""
 NUM_IMAGES=0
-T1_ON_T2=0
-SECTIONS=""
+THRESHOLDS=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --dataset)   DATASET="$2"; shift 2;;
-        --task)      TASK="$2"; shift 2;;
+        --dataset)    DATASET="$2"; shift 2;;
+        --task)       TASK="$2"; shift 2;;
+        --method)     METHOD="$2"; shift 2;;
         --checkpoint) CKPT="$2"; shift 2;;
-        --config)    CONFIG="$2"; shift 2;;
-        --num-images) NUM_IMAGES="$2"; shift 2;;
-        --t1-on-t2)  T1_ON_T2=1; shift;;
-        --sections)  shift; SECTIONS=""; while [[ $# -gt 0 && "$1" != --* ]]; do SECTIONS="$SECTIONS $1"; shift; done;;
+        --config)     CONFIG="$2"; shift 2;;
+        --shot)        FEWSHOT_K="$2"; shift 2;;
+        --seed)        FEWSHOT_SEED="$2"; shift 2;;
+        --out-dir)     OUT_DIR_OVERRIDE="$2"; shift 2;;
+        --num-images)  NUM_IMAGES="$2"; shift 2;;
+        --thresholds)  THRESHOLDS="$2"; shift 2;;
         *) echo "Unknown arg: $1"; exit 1;;
     esac
 done
 
 export DATASET TASK
 
+# ─── Resolve method suffix (mirrors train_owod_l_t2.sbatch logic) ────────────
+case "$METHOD" in
+    wapr-kume)   METHOD_SUFFIX="_wapr_kume" ;;
+    kume)        METHOD_SUFFIX="_kume" ;;
+    wapr)        METHOD_SUFFIX="_wapr" ;;
+    baseline|"")  METHOD_SUFFIX="" ;;
+    *)           echo "ERROR: Unknown --method '$METHOD'. Use: baseline wapr kume wapr-kume"; exit 1 ;;
+esac
+
 # ─── Auto-detect config and checkpoint ────────────────────────────────────
+DATASET_LOWER=$(echo "$DATASET" | tr '[:upper:]' '[:lower:]')
+STEM=yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod
+
 case $DATASET in
     IDD)
         LOG_DIR=slurm_logs/idd
         FEWSHOT_DIR=data/OWOD/iddsplit
+        T1_CKPT_DIR=work_dirs/${STEM}_idd_train_task1
         if [ -z "$CONFIG" ]; then
             if [ "$TASK" -eq 1 ]; then
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd.py
+            elif [ "$METHOD" = "wapr-kume" ] || [ "$METHOD" = "kume" ]; then
+                CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2_kume.py
+            elif [ "$METHOD" = "wapr" ]; then
+                CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_wapr.py
             else
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2.py
             fi
         fi
-        T1_CKPT_DIR=work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_train_task1
-        T2_CKPT_DIR=work_dirs/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2_train_task2
-        T2_CKPT_DIR_VANILLA=work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_train_task2_10shot_seed1
         ;;
     FOOD_VOCCOCO)
         LOG_DIR=slurm_logs/voccoco
         FEWSHOT_DIR=data/OWOD/voccocosplit
+        T1_CKPT_DIR=work_dirs/${STEM}_food_voccoco_train_task1
         if [ -z "$CONFIG" ]; then
             if [ "$TASK" -eq 1 ]; then
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_food_voccoco.py
-            else
+            elif [ "$METHOD" = "wapr" ] || [ "$METHOD" = "wapr-kume" ]; then
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_80e_8gpus_owod_food_voccoco_t2_wapr.py
+            else
+                CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_80e_8gpus_owod_food_voccoco_t2.py
             fi
         fi
-        T1_CKPT_DIR=work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_food_voccoco_train_task1
-        T2_CKPT_DIR=work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_food_voccoco_train_task2_10shot_seed1_wapr
-        T2_CKPT_DIR_VANILLA=work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_food_voccoco_train_task2_10shot_seed1
         ;;
     FOOD_VOC)
         LOG_DIR=slurm_logs/voc
         FEWSHOT_DIR=data/OWOD/vocsplit
+        T1_CKPT_DIR=work_dirs/${STEM}_food_voc_train_task1
         if [ -z "$CONFIG" ]; then
             if [ "$TASK" -eq 1 ]; then
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_food_voc.py
+            elif [ "$METHOD" = "wapr" ] || [ "$METHOD" = "wapr-kume" ]; then
+                CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_5e_8gpus_owod_food_voc_t2_wapr.py
             else
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_80e_8gpus_owod_food_voc_t2.py
             fi
         fi
-        T1_CKPT_DIR=work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_food_voc_train_task1
-        T2_CKPT_DIR=work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_food_voc_train_task2_10shot_seed1
         ;;
     *)
         echo "ERROR: Unknown dataset '$DATASET'. Use IDD | FOOD_VOCCOCO | FOOD_VOC"
@@ -124,32 +144,34 @@ case $DATASET in
         ;;
 esac
 
+# T2 work dir (matches what train_owod_l_t2.sbatch produces)
+if [ "$TASK" -eq 1 ]; then
+    T2_WORK_DIR="$T1_CKPT_DIR"
+else
+    T2_WORK_DIR=work_dirs/${STEM}_${DATASET_LOWER}_train_task2_${FEWSHOT_K}shot_seed${FEWSHOT_SEED}${METHOD_SUFFIX}
+fi
+
 # Auto-detect checkpoint
 if [ -z "$CKPT" ]; then
-    if [ "$T1_ON_T2" -eq 1 ] || [ "$TASK" -eq 1 ]; then
-        CKPT=$(ls -t ${T1_CKPT_DIR}/best*.pth 2>/dev/null | head -1)
-    else
-        # Try WAPR dir first, then vanilla dir, then latest epoch in either
-        CKPT=$(ls -t ${T2_CKPT_DIR}/best*.pth 2>/dev/null | head -1)
-        if [ -z "$CKPT" ] && [ -n "${T2_CKPT_DIR_VANILLA:-}" ]; then
-            CKPT=$(ls -t ${T2_CKPT_DIR_VANILLA}/best*.pth 2>/dev/null | head -1)
-        fi
-        if [ -z "$CKPT" ]; then
-            CKPT=$(ls -t ${T2_CKPT_DIR}/epoch_*.pth 2>/dev/null | head -1)
-        fi
+    CKPT=$(ls -t "${T2_WORK_DIR}"/best*.pth 2>/dev/null | head -1)
+    if [ -z "$CKPT" ]; then
+        CKPT=$(ls -t "${T2_WORK_DIR}"/epoch_*.pth 2>/dev/null | head -1)
     fi
 fi
 
 if [ -z "$CKPT" ] || [ ! -f "$CKPT" ]; then
-    echo "ERROR: No checkpoint found. Searched:"
-    echo "  T1: ${T1_CKPT_DIR}/best*.pth"
-    echo "  T2: ${T2_CKPT_DIR}/best*.pth"
-    if [ -n "${T2_CKPT_DIR_VANILLA:-}" ]; then
-        echo "  T2 vanilla: ${T2_CKPT_DIR_VANILLA}/best*.pth"
-    fi
-    echo "Use --checkpoint to specify manually."
+    echo "ERROR: No checkpoint found in ${T2_WORK_DIR}"
+    echo "  Use --checkpoint /path/to/ckpt.pth to specify manually."
     exit 1
 fi
+
+# Output dir
+if [ -n "$OUT_DIR_OVERRIDE" ]; then
+    OUT_DIR="$OUT_DIR_OVERRIDE"
+else
+    OUT_DIR="${T2_WORK_DIR}/diagnose"
+fi
+mkdir -p "$OUT_DIR"
 
 # Symlink logs to dataset-specific dir
 ln -sf "$(pwd)/slurm_logs/analysis/diag_${SLURM_JOB_ID}.out" "${LOG_DIR}/diag_${SLURM_JOB_ID}.out" 2>/dev/null
@@ -158,8 +180,8 @@ ln -sf "$(pwd)/slurm_logs/analysis/diag_${SLURM_JOB_ID}.err" "${LOG_DIR}/diag_${
 # Set env vars for the config
 export THRESHOLD=0.05
 export SAVE=False
-export FEWSHOT_K=${FEWSHOT_K:-10}
-export FEWSHOT_SEED=${FEWSHOT_SEED:-1}
+export FEWSHOT_K=${FEWSHOT_K}
+export FEWSHOT_SEED=${FEWSHOT_SEED}
 export FEWSHOT_DIR
 export VISUALIZE=${VISUALIZE:-0}
 
@@ -168,35 +190,42 @@ echo "OWOD DIAGNOSTIC"
 echo "=========================================="
 echo "  Dataset:    $DATASET"
 echo "  Task:       T${TASK}"
+echo "  Method:     $METHOD"
 echo "  Config:     $CONFIG"
 echo "  Checkpoint: $CKPT ($(du -sh "$CKPT" 2>/dev/null | cut -f1))"
-echo "  Num images: $NUM_IMAGES"
-echo "  T1-on-T2:   $T1_ON_T2"
-echo "  Sections:   ${SECTIONS:-all}"
+echo "  Out dir:    $OUT_DIR"
+echo "  Num images: ${NUM_IMAGES:-all}"
+echo "  Thresholds: ${THRESHOLDS:-default (0.3-0.9)}"
 echo "  Log dir:    $LOG_DIR"
 echo "=========================================="
 
-# Auto-detect T1 checkpoint
+# Auto-detect T1 checkpoint (informational only)
 T1_CKPT=$(ls -t ${T1_CKPT_DIR}/best*.pth 2>/dev/null | head -1)
-T1_FLAG=""
 if [ -n "$T1_CKPT" ] && [ -f "$T1_CKPT" ]; then
-    T1_FLAG="--t1-checkpoint $T1_CKPT"
     echo "  T1 Ckpt:    $T1_CKPT"
 else
-    echo "  T1 Ckpt:    (not found, skipping visual centroid)"
+    echo "  T1 Ckpt:    (not found)"
 fi
 
-SECTIONS_FLAG=""
-if [ -n "$SECTIONS" ]; then
-    SECTIONS_FLAG="--sections $SECTIONS"
+NUM_IMAGES_FLAG=""
+if [ "$NUM_IMAGES" -gt 0 ] 2>/dev/null; then
+    NUM_IMAGES_FLAG="--num-images $NUM_IMAGES"
+fi
+
+THRESHOLDS_FLAG=""
+if [ -n "$THRESHOLDS" ]; then
+    THRESHOLDS_FLAG="--thresholds $THRESHOLDS"
 fi
 
 python tools/diagnose_owod.py \
     --config "$CONFIG" \
     --checkpoint "$CKPT" \
-    $T1_FLAG \
-    --num-images "$NUM_IMAGES" \
-    $SECTIONS_FLAG
+    --out-dir "$OUT_DIR" \
+    $NUM_IMAGES_FLAG \
+    $THRESHOLDS_FLAG
+
+echo ""
+echo "Diagnosis complete. Results in: $OUT_DIR"
 
 echo ""
 echo "DIAGNOSTIC FINISHED at $(date)"
