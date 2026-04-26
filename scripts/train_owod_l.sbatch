@@ -20,10 +20,11 @@
 #   sbatch scripts/train_owod_l.sbatch --dataset FOOD_VOC
 #   sbatch scripts/train_owod_l.sbatch --dataset FOOD_VOCCOCO
 #   sbatch scripts/train_owod_l.sbatch --dataset IDD
+#   sbatch scripts/train_owod_l.sbatch --dataset nuOWODB
 #   sbatch scripts/train_owod_l.sbatch --dataset FOOD_VOC --gpus 4 --threshold 0.1
 #
 # Required arguments:
-#   --dataset DATASET     Dataset name (IDD, FOOD_VOC, FOOD_VOCCOCO, etc.)
+#   --dataset DATASET     Dataset name (IDD, FOOD_VOC, FOOD_VOCCOCO, nuOWODB, etc.)
 #
 # Optional arguments:
 #   --gpus N              Number of GPUs (default: SLURM_GPUS_ON_NODE or 2)
@@ -57,7 +58,7 @@ done
 if [ -z "$DATASET" ]; then
     echo "ERROR: --dataset is required."
     echo "Usage: sbatch scripts/train_owod_l.sbatch --dataset DATASET"
-    echo "Available datasets: IDD, FOOD_VOC, FOOD_VOCCOCO"
+    echo "Available datasets: IDD, FOOD_VOC, FOOD_VOCCOCO, nuOWODB"
     exit 1
 fi
 
@@ -68,6 +69,7 @@ case "$DATASET" in
     IDD)           _LOG_SUBDIR=slurm_logs/idd ;;
     FOOD_VOCCOCO)  _LOG_SUBDIR=slurm_logs/voccoco ;;
     FOOD_VOC)      _LOG_SUBDIR=slurm_logs/voc ;;
+    nuOWODB)       _LOG_SUBDIR=slurm_logs/nuscenes ;;
     *)             _LOG_SUBDIR=slurm_logs/$(echo "$DATASET" | tr '[:upper:]' '[:lower:]') ;;
 esac
 mkdir -p "$_LOG_SUBDIR"
@@ -97,8 +99,13 @@ case $DATASET in
         EMBED_DIR=embeddings/uniow-food-voccoco
         EMBED_PREFIX=food_voccoco
         ;;
+    nuOWODB)
+        CONFIG=${CONFIG_OVERRIDE:-configs/owod_ft/${STEM}.py}
+        EMBED_DIR=embeddings/uniow-l
+        EMBED_PREFIX=nuowodb
+        ;;
     *)
-        echo "ERROR: Unknown dataset '$DATASET'. Available: IDD, FOOD_VOC, FOOD_VOCCOCO"
+        echo "ERROR: Unknown dataset '$DATASET'. Available: IDD, FOOD_VOC, FOOD_VOCCOCO, nuOWODB"
         exit 1
         ;;
 esac
@@ -162,7 +169,10 @@ mkdir -p slurm_logs "$EMBED_DIR"
 # ─── Verify embeddings exist ─────────────────────────────────────────────────
 if [ ! -f "${EMBED_DIR}/${EMBED_PREFIX}_t1.npy" ]; then
     echo "Embeddings not found — generating from cached CLIP model..."
-    python tools/owod_scripts/extract_embeddings.py --dataset "$DATASET" --task 1 --device auto
+    python tools/owod_scripts/extract_embeddings.py \
+        --ckpt "$PRETRAINED_CKPT" \
+        --dataset "$DATASET" \
+        --task 1
     if [ $? -ne 0 ]; then
         echo "ERROR: Failed to extract embeddings. Aborting."
         exit 1

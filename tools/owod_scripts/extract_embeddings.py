@@ -37,6 +37,7 @@ EMBED_DIR_MAP = {
     "FOOD_VOCCOCO": "uniow-food-voccoco",
     "MOWODB": "uniow-l",
     "SOWODB": "uniow-l",
+    "nuOWODB": "uniow-l",
 }
 
 # Map dataset names to their task count
@@ -46,6 +47,7 @@ DATASET_TASKS = {
     "FOOD_VOCCOCO": [1, 2],
     "MOWODB": [1, 2, 3, 4],
     "SOWODB": [1, 2, 3, 4],
+    "nuOWODB": [1, 2, 3],
 }
 
 
@@ -123,9 +125,10 @@ def main():
         runner = Runner.from_cfg(cfg)
         runner.call_hook("before_run")
         runner.load_checkpoint(args.ckpt, map_location='cpu')
-        model = runner.model.to('cuda')
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        model = runner.model.to(device)
         model.eval()
-        print(f"  Model loaded from: {args.ckpt}")
+        print(f"  Model loaded from: {args.ckpt} on {device}")
 
         # Extract wildcard embedding
         extract_wildcard_embedding(model, save_dir, wildcard=args.wildcard)

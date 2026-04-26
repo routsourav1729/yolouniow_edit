@@ -148,9 +148,27 @@ def main():
     state_dict = ckpt.get('state_dict', ckpt)
     state_dict = {k: v for k, v in state_dict.items()
                   if 'text_model' not in k}
+    # Load checkpoint embeddings AS-IS — for a trained T2 ckpt we want the
+    # actual trained novel + T_unk + T_anchor embeddings. The default
+    # update_embeddings() path blends novel slots with config defaults
+    # (used at the *start* of T2 training), which is wrong here.
     if 'embeddings' in state_dict:
-        state_dict['embeddings'] = model.update_embeddings(
-            state_dict['embeddings'])
+        ckpt_emb = state_dict['embeddings']
+        if ckpt_emb.shape == model.embeddings.shape:
+            with torch.no_grad():
+                model.embeddings.data.copy_(ckpt_emb.to(model.embeddings.device))
+            print(f'[init] embeddings loaded from ckpt directly '
+                  f'(shape={tuple(ckpt_emb.shape)})')
+        else:
+            print(f'[warn] embeddings shape mismatch: ckpt={tuple(ckpt_emb.shape)} '
+                  f'model={tuple(model.embeddings.shape)} — falling back to update_embeddings')
+            state_dict['embeddings'] = model.update_embeddings(ckpt_emb)
+        print(f'[init] T_unk norm     = {ckpt_emb[-2].norm().item():.4f}')
+        print(f'[init] T_anchor norm  = {ckpt_emb[-1].norm().item():.4f}')
+        # Remove from state_dict so load_state_dict doesn't overwrite
+        # our direct copy with anything stale.
+        if ckpt_emb.shape == model.embeddings.shape:
+            state_dict = {k: v for k, v in state_dict.items() if k != 'embeddings'}
     load_state_dict(model, state_dict, strict=False)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.eval().to(device)
