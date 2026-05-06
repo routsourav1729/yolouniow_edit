@@ -16,12 +16,6 @@ DATA FLOW
   Checkpoint (--checkpoint)           Trained weights + embeddings
   owodb_const.py                      Full class name list per dataset
 
-  Model pipeline                      What it computes
-  ──────────────────────────────────  ──────────────────────────────────────
-  extract_feat()                      Image features + text embeddings
-  forward_one2one()                   Raw per-anchor logits + bbox deltas
-  predict_by_feat()                   Final predictions after NMS + unknown_nms
-
 ANALYSIS 1 — CONFUSION MATRIX
   For each test image:
     • Run full predict pipeline → bboxes, scores, labels (original coords)
@@ -38,12 +32,23 @@ ANALYSIS 2 — PER-CLASS ANCHOR METRICS
     • Record: anchor_score, tunk_score, max_known, ratio, energy, entropy
     • Grouped by GT class name and role (base / novel / unknown)
 
-OUTPUTS
-  {out-dir}/confusion_matrix.csv     Row = GT class, Col = predicted class
-  {out-dir}/false_positives.csv      Unmatched predictions by predicted class
-  {out-dir}/test_analysis.json       Per-class metrics + confusion + FP data
+MODES
+  Single checkpoint (existing):
+    python analyze_owod_test.py --config C --checkpoint K --out-dir D [...]
+
+  Multi checkpoint (data loads once, N checkpoints share each batch):
+    python analyze_owod_test.py --runs-json runs.json [--num-images N] [--conf-thr T] [--batch-size B]
+    runs.json = [{"label":"t2_baseline","config":"...","checkpoint":"...","out_dir":"..."},
+                 {"label":"t2_wapr","config":"...","checkpoint":"...","out_dir":"..."}]
+    All runs must share the same DATASET / TASK env vars (same test split).
+
+OUTPUTS  (per run, under its out_dir)
+  confusion_matrix.csv     Row = GT class, Col = predicted class
+  false_positives.csv      Unmatched predictions by predicted class
+  test_analysis.json       Per-class metrics + confusion + FP data
 """
 import argparse
+import copy
 import csv
 import json
 import os
@@ -59,20 +64,22 @@ import torch
 
 def parse_args():
     p = argparse.ArgumentParser(description='OWOD test-set analysis')
-    p.add_argument('--config', required=True)
-    p.add_argument('--checkpoint', required=True)
-    p.add_argument('--out-dir', required=True)
-    p.add_argument('--num-images', type=int, default=0,
-                   help='0 = all test images.')
-    p.add_argument('--conf-thr', type=float, default=0.05,
-                   help='Score threshold for confusion-matrix predictions.')
-    p.add_argument('--batch-size', type=int, default=32,
-                   help='Inference batch size (default 32, fits L40 48 GB).')
+    # Single-checkpoint mode
+    p.add_argument('--config', default='')
+    p.add_argument('--checkpoint', default='')
+    p.add_argument('--out-dir', default='')
+    # Multi-checkpoint mode
+    p.add_argument('--runs-json', default='',
+                   help='JSON file with list of {label,config,checkpoint,out_dir}. '
+                        'When set, test data loads once; all runs share each batch.')
+    # Shared options
+    p.add_argument('--num-images', type=int, default=0, help='0 = all test images.')
+    p.add_argument('--conf-thr', type=float, default=0.05)
+    p.add_argument('--batch-size', type=int, default=64)
     return p.parse_args()
 
 
 def parse_voc_xml_full(xml_path):
-    """Parse VOC XML → list[(class_name, [x1, y1, x2, y2], difficult_int)]."""
     out = []
     for obj in ET.parse(xml_path).getroot().findall('object'):
         bb = obj.find('bndbox')
@@ -86,7 +93,6 @@ def parse_voc_xml_full(xml_path):
 
 
 def box_iou_xyxy(a, b):
-    """IoU between two sets of [x1, y1, x2, y2] boxes."""
     if a.numel() == 0 or b.numel() == 0:
         return a.new_zeros((a.shape[0], b.shape[0]))
     a_, b_ = a.unsqueeze(1), b.unsqueeze(0)
@@ -118,106 +124,86 @@ def percentiles(arr):
     return out
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Model loading ─────────────────────────────────────────────────────────────
 
-def main():
-    args = parse_args()
-    os.makedirs(args.out_dir, exist_ok=True)
-
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-    if repo_root not in sys.path:
-        sys.path.insert(0, repo_root)
-
+def build_model_ctx(cfg_path, ckpt_path, device):
+    """Load config + checkpoint → model context dict."""
     from mmengine.config import Config
-    from mmengine.dataset import Compose
-    from mmengine.registry import init_default_scope
     from mmengine.runner import load_state_dict
-    from mmyolo.registry import MODELS          # noqa: F401
-    import mmyolo                               # noqa: F401
-    import yolo_world                           # noqa: F401
-    init_default_scope('mmyolo')
+    from mmyolo.registry import MODELS
 
-    # ── Load config ───────────────────────────────────────────────────────
-    print(f'[init] config:     {args.config}')
-    print(f'[init] checkpoint: {args.checkpoint}')
-    cfg = Config.fromfile(args.config)
-    cfg.work_dir = args.out_dir
+    cfg = Config.fromfile(cfg_path)
 
-    # ── Build + load model ────────────────────────────────────────────────
     model = MODELS.build(cfg.model)
-    ckpt = torch.load(args.checkpoint, map_location='cpu')
+    ckpt = torch.load(ckpt_path, map_location='cpu')
     state_dict = ckpt.get('state_dict', ckpt)
-    state_dict = {k: v for k, v in state_dict.items()
-                  if 'text_model' not in k}
+    state_dict = {k: v for k, v in state_dict.items() if 'text_model' not in k}
 
     if 'embeddings' in state_dict:
         ckpt_emb = state_dict['embeddings']
         if ckpt_emb.shape == model.embeddings.shape:
             with torch.no_grad():
                 model.embeddings.data.copy_(ckpt_emb.to(model.embeddings.device))
-            print(f'[init] embeddings loaded from ckpt directly '
-                  f'(shape={tuple(ckpt_emb.shape)})')
-            state_dict = {k: v for k, v in state_dict.items()
-                          if k != 'embeddings'}
+            print(f'  [model] embeddings from ckpt (shape={tuple(ckpt_emb.shape)})')
+            state_dict = {k: v for k, v in state_dict.items() if k != 'embeddings'}
         else:
-            print(f'[warn] embeddings shape mismatch: ckpt={tuple(ckpt_emb.shape)} '
+            print(f'  [warn] embeddings shape mismatch: ckpt={tuple(ckpt_emb.shape)} '
                   f'model={tuple(model.embeddings.shape)} — falling back')
             state_dict['embeddings'] = model.update_embeddings(ckpt_emb)
 
+    import logging
+    _mme_logger = logging.getLogger('mmengine')
+    _prev_level = _mme_logger.level
+    _mme_logger.setLevel(logging.ERROR)   # suppress "missing keys" info-level noise
     load_state_dict(model, state_dict, strict=False)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    _mme_logger.setLevel(_prev_level)
     model.eval().to(device)
 
     head = model.bbox_head
     head_module = head.head_module
-    # Mirror OWODDetector.predict(): set num_classes on the outer head to
-    # num_test_classes so predict_by_feat uses the correct class count.
     head.num_classes = model.num_test_classes
     num_classes = head_module.num_classes
     num_prev = model.num_prev_classes
     num_cur = num_classes - num_prev - 2
     known_count = num_prev + num_cur
 
-    # ── Dataset / class info (from config + owodb_const) ──────────────────
-    # Extract resolved dataset name and paths from the config.
+    # Dataset / class info from config
     dataset_name = str(cfg.owod_dataset)
     data_root = str(getattr(cfg, 'owod_root', 'data/OWOD'))
     test_image_set = str(getattr(cfg, 'test_image_set', 'test'))
 
     from yolo_world.datasets.owodb_const import VOC_COCO_CLASS_NAMES
     all_class_names = list(VOC_COCO_CLASS_NAMES[dataset_name])
-
     base_classes = all_class_names[:num_prev]
     novel_classes = all_class_names[num_prev:num_prev + num_cur]
-    base_set, novel_set = set(base_classes), set(novel_classes)
 
-    # Model label index → name  (0..known_count-1 known, known_count = T_unk)
-    model_label_names = list(all_class_names[:known_count]) + ['unknown']
+    return {
+        'model': model,
+        'head': head,
+        'head_module': head_module,
+        'num_classes': num_classes,
+        'num_prev': num_prev,
+        'num_cur': num_cur,
+        'known_count': known_count,
+        'dataset_name': dataset_name,
+        'data_root': data_root,
+        'test_image_set': test_image_set,
+        'all_class_names': all_class_names,
+        'base_classes': base_classes,
+        'novel_classes': novel_classes,
+        'base_set': set(base_classes),
+        'novel_set': set(novel_classes),
+        'model_label_names': list(all_class_names[:known_count]) + ['unknown'],
+        'cfg': cfg,
+        'cfg_path': cfg_path,
+        'ckpt_path': ckpt_path,
+    }
 
-    print(f'[init] dataset={dataset_name}  K(known)={known_count} '
-          f'(prev={num_prev}, cur={num_cur})')
-    print(f'[init] base={base_classes}')
-    print(f'[init] novel={novel_classes}')
 
-    # Read test split IDs
-    test_id_path = os.path.join(
-        data_root, 'ImageSets', dataset_name, f'{test_image_set}.txt')
-    with open(test_id_path) as f:
-        test_ids = [l.strip() for l in f if l.strip()]
-
-    img_dir = os.path.join(data_root, 'JPEGImages', dataset_name)
-    ann_dir = os.path.join(data_root, 'Annotations', dataset_name)
-
-    # Auto-detect image extension from first available test image
-    img_ext = '.jpg'
-    for ext in ('.jpg', '.jpeg', '.png'):
-        if os.path.exists(os.path.join(img_dir, test_ids[0] + ext)):
-            img_ext = ext
-            break
-    print(f'[init] {len(test_ids)} test images  (ext={img_ext})  '
-          f'conf_thr={args.conf_thr}')
-
-    # ── Build image pipeline (from val config, strip annotations) ─────────
+def build_pipeline(ctx):
+    """Extract image-only pipeline from config (no LoadAnnotations / PackDetInputs)."""
+    from mmengine.dataset import Compose
+    cfg = ctx['cfg']
     val_ds_cfg = cfg.val_dataloader.dataset
     raw_pipeline = (val_ds_cfg.pipeline
                     if hasattr(val_ds_cfg, 'pipeline')
@@ -229,377 +215,320 @@ def main():
         type='mmdet.PackDetInputs',
         meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape',
                    'scale_factor', 'pad_param')))
-    pipeline = Compose(img_pipeline_cfg)
+    return Compose(img_pipeline_cfg)
 
-    # ── Accumulators ──────────────────────────────────────────────────────
-    metric_names = ['anchor', 'max_known', 'tunk', 'ratio',
-                    'energy', 'entropy',
-                    'tunk_raw', 'tanchor_raw', 'correct_cls_score',
-                    'correct_cls_rank']
-    confusion = defaultdict(lambda: defaultdict(int))  # [gt_cls][pred_cls]
-    false_pos_by_cls = defaultdict(int)
-    gt_counts = defaultdict(int)          # non-difficult GT only (matches evaluator)
-    gt_counts_all = defaultdict(int)      # all GT including difficult (for reference)
-    per_cls_metrics = defaultdict(lambda: {m: [] for m in metric_names})
 
-    # U-Recall compatible counters (matches evaluator logic exactly):
-    #   numerator = unknown GT boxes (non-difficult) that have ANY
-    #               surviving unknown prediction at IoU >= 0.5
-    #               (unknown predictions bypass score threshold, same as evaluator)
-    #   denominator = non-difficult GT boxes whose class is unknown
-    unk_cls_idx = known_count  # label index of 'unknown' in model_label_names
-    u_recall_hit = defaultdict(int)    # per-original-class unknown GT boxes recalled
-    u_recall_total = defaultdict(int)  # per-original-class unknown GT total (non-diff)
+# ── Accumulators ──────────────────────────────────────────────────────────────
 
-    n_imgs = len(test_ids) if args.num_images == 0 else min(
-        args.num_images, len(test_ids))
-    print(f'\n[forward] processing {n_imgs} test images  '
-          f'(batch_size={args.batch_size}) ...')
+METRIC_NAMES = ['anchor', 'max_known', 'tunk', 'ratio',
+                'energy', 'entropy',
+                'tunk_raw', 'tanchor_raw', 'correct_cls_score',
+                'correct_cls_rank']
 
-    n_proc = 0
-    n_skip = 0
 
-    # ── per-batch forward + analysis ──────────────────────────────────────
-    # Each entry in buf: (img_id, raw_cpu_tensor[1,C,H,W], ds, meta,
-    #                     scale_np, pad_np, ann_path)
-    # raw_cpu_tensor is uint8 on CPU; normalisation happens inside here.
-    def process_batch(buf):
-        nonlocal n_proc
-        B = len(buf)
+def init_accum():
+    return {
+        'confusion': defaultdict(lambda: defaultdict(int)),
+        'false_pos_by_cls': defaultdict(int),
+        'gt_counts': defaultdict(int),
+        'gt_counts_all': defaultdict(int),
+        'per_cls_metrics': defaultdict(lambda: {m: [] for m in METRIC_NAMES}),
+        'u_recall_hit': defaultdict(int),
+        'u_recall_total': defaultdict(int),
+        'n_proc': 0,
+        'n_skip': 0,
+    }
 
-        # Stack into a single GPU batch and normalise
-        batch_inputs = torch.cat(
-            [entry[1] for entry in buf], dim=0
-        ).float().to(device) / 255.0                             # [B, C, H, W]
 
-        data_samples = [entry[2] for entry in buf]
-        batch_metas  = [entry[3] for entry in buf]
+def _stride_key(s):
+    """Bin a stride float to its integer stride label (8/16/32/…)."""
+    return int(round(s))
 
-        # Single batched forward — both backbone and head run once
-        # for the whole batch.  forward_one2one uses the one-to-one head
-        # only (the one-to-many head is training-only).
-        img_feats, txt_feats = model.extract_feat(batch_inputs, data_samples)
-        cls_list, bbox_list  = head_module.forward_one2one(img_feats, txt_feats)
 
-        # ── Analysis 1: NMS predictions ───────────────────────────────────
-        # predict_by_feat is on the OUTER head (YOLOv10WorldHead).
-        # It zeros anchor slot (-1), applies sigmoid + filter_scores_and_topk
-        # (multi_label path), decodes bboxes, runs class-specific NMS
-        # (IoU=0.7), then _unknown_post_process (IoU≥0.99 suppression).
-        # Returns one InstanceData per image (original-image coords because
-        # rescale=True).
-        results_list = head.predict_by_feat(
-            cls_list, bbox_list,
-            batch_img_metas=batch_metas,
-            rescale=True,
-            with_nms=True)                                       # list[B]
+# ── Batch processing ──────────────────────────────────────────────────────────
 
-        # ── Analysis 2: shared anchor priors (same spatial layout all imgs) ─
-        featmap_sizes = [(t.shape[-2], t.shape[-1]) for t in cls_list]
-        mlvl_priors   = head.prior_generator.grid_priors(
-            featmap_sizes, dtype=batch_inputs.dtype,
-            device=device, with_stride=True)
-        flat_priors   = torch.cat(mlvl_priors, dim=0)           # [N_anc, 4]
+def process_batch_with_ctx(buf, ctx, accum, device, conf_thr):
+    """Run one preprocessed batch through one model context, updating accum."""
+    B = len(buf)
+    batch_inputs = torch.cat(
+        [entry[1] for entry in buf], dim=0
+    ).float().to(device) / 255.0
 
-        # Batched logits and bbox deltas — index [b] per image below
-        flat_logits_b = torch.cat([
-            t.permute(0, 2, 3, 1).reshape(B, -1, num_classes)
-            for t in cls_list], dim=1)                           # [B, N_anc, C]
-        flat_bbox_b   = torch.cat([
-            t.permute(0, 2, 3, 1).reshape(B, -1, 4)
-            for t in bbox_list], dim=1)                          # [B, N_anc, 4]
+    data_samples = [entry[2] for entry in buf]
+    batch_metas  = [entry[3] for entry in buf]
 
-        for b, (img_id, _, ds, meta, scale, pad, ann_path) in enumerate(buf):
-            # ── Confusion matrix ──────────────────────────────────────────
-            pred       = results_list[b]
-            keep_mask  = pred.scores >= args.conf_thr
-            pred_bboxes = pred.bboxes[keep_mask]                 # orig-img coords
-            pred_scores = pred.scores[keep_mask]
-            pred_labels = pred.labels[keep_mask]
+    model       = ctx['model']
+    head        = ctx['head']
+    head_module = ctx['head_module']
+    num_classes  = ctx['num_classes']
+    known_count  = ctx['known_count']
+    num_prev     = ctx['num_prev']
+    all_class_names  = ctx['all_class_names']
+    base_set     = ctx['base_set']
+    novel_set    = ctx['novel_set']
+    model_label_names = ctx['model_label_names']
+    unk_cls_idx  = known_count
 
-            gt_full   = (parse_voc_xml_full(ann_path)
-                         if os.path.exists(ann_path) else [])
-            gt_names  = [g[0] for g in gt_full]
-            gt_difficult = [g[2] for g in gt_full]  # 0 or 1
-            for gn, diff in zip(gt_names, gt_difficult):
-                gt_counts_all[gn] += 1
-                if not diff:
-                    gt_counts[gn] += 1  # only non-difficult, matches voc_eval npos
+    img_feats, txt_feats = model.extract_feat(batch_inputs, data_samples)
+    cls_list, bbox_list  = head_module.forward_one2one(img_feats, txt_feats)
 
-            # Non-difficult GT boxes only for confusion matrix (matches evaluator)
-            gt_boxes_nd = (
-                torch.tensor([g[1] for g, d in zip(gt_full, gt_difficult) if not d],
-                             dtype=torch.float32, device=device)
-                if any(not d for d in gt_difficult)
-                else torch.zeros((0, 4), device=device))
-            gt_names_nd = [g[0] for g, d in zip(gt_full, gt_difficult) if not d]
+    results_list = head.predict_by_feat(
+        cls_list, bbox_list,
+        batch_img_metas=batch_metas,
+        rescale=True,
+        with_nms=True)
 
-            # All GT boxes (including difficult) for U-Recall — evaluator
-            # also computes unknown_class_recs from all GT mapped to 'unknown'
-            # but excludes difficult ones from being recalled (det flag).
-            # We pre-separate for clarity.
-            gt_boxes_orig = (
-                torch.tensor([g[1] for g in gt_full],
-                             dtype=torch.float32, device=device)
-                if gt_full else torch.zeros((0, 4), device=device))
+    featmap_sizes = [(t.shape[-2], t.shape[-1]) for t in cls_list]
+    mlvl_priors   = head.prior_generator.grid_priors(
+        featmap_sizes, dtype=batch_inputs.dtype,
+        device=device, with_stride=True)
+    flat_priors = torch.cat(mlvl_priors, dim=0)
 
-            # ── Confusion matrix on non-difficult GT ──────────────────────────────
-            # Greedy match: highest-scoring prediction (above conf_thr) → GT.
-            # Uses only non-difficult GT boxes, matching evaluator's npos denominator.
-            if len(pred_bboxes) > 0 and gt_boxes_nd.shape[0] > 0:
-                iou_pg      = box_iou_xyxy(pred_bboxes, gt_boxes_nd)
-                matched_gt  = set()
-                matched_pred = set()
-                for pi in pred_scores.argsort(descending=True).tolist():
-                    best_iou, best_gi = 0.0, -1
-                    for gi in range(len(gt_names_nd)):
-                        if gi in matched_gt:
-                            continue
-                        v = iou_pg[pi, gi].item()
-                        if v >= 0.5 and v > best_iou:
-                            best_iou, best_gi = v, gi
-                    if best_gi >= 0:
-                        lbl      = pred_labels[pi].item()
-                        pred_cls = (model_label_names[lbl]
-                                    if lbl < len(model_label_names)
-                                    else f'cls_{lbl}')
-                        confusion[gt_names_nd[best_gi]][pred_cls] += 1
-                        matched_gt.add(best_gi)
-                        matched_pred.add(pi)
-                for gi in range(len(gt_names_nd)):
-                    if gi not in matched_gt:
-                        confusion[gt_names_nd[gi]]['missed'] += 1
-                for pi in range(len(pred_bboxes)):
-                    if pi not in matched_pred:
-                        lbl      = pred_labels[pi].item()
-                        pred_cls = (model_label_names[lbl]
-                                    if lbl < len(model_label_names)
-                                    else f'cls_{lbl}')
-                        false_pos_by_cls[pred_cls] += 1
-            elif gt_names_nd:
-                for gn in gt_names_nd:
-                    confusion[gn]['missed'] += 1
-            else:
-                for pi in range(len(pred_bboxes)):
-                    lbl      = pred_labels[pi].item()
+    flat_logits_b = torch.cat([
+        t.permute(0, 2, 3, 1).reshape(B, -1, num_classes)
+        for t in cls_list], dim=1)
+    flat_bbox_b = torch.cat([
+        t.permute(0, 2, 3, 1).reshape(B, -1, 4)
+        for t in bbox_list], dim=1)
+
+    confusion        = accum['confusion']
+    false_pos_by_cls = accum['false_pos_by_cls']
+    gt_counts        = accum['gt_counts']
+    gt_counts_all    = accum['gt_counts_all']
+    per_cls_metrics  = accum['per_cls_metrics']
+    u_recall_hit     = accum['u_recall_hit']
+    u_recall_total   = accum['u_recall_total']
+
+    for b, (img_id, _, ds, meta, scale, pad, ann_path) in enumerate(buf):
+        pred       = results_list[b]
+        keep_mask  = pred.scores >= conf_thr
+        pred_bboxes = pred.bboxes[keep_mask]
+        pred_scores = pred.scores[keep_mask]
+        pred_labels = pred.labels[keep_mask]
+
+        gt_full   = (parse_voc_xml_full(ann_path)
+                     if os.path.exists(ann_path) else [])
+        gt_names  = [g[0] for g in gt_full]
+        gt_difficult = [g[2] for g in gt_full]
+        for gn, diff in zip(gt_names, gt_difficult):
+            gt_counts_all[gn] += 1
+            if not diff:
+                gt_counts[gn] += 1
+
+        gt_boxes_nd = (
+            torch.tensor([g[1] for g, d in zip(gt_full, gt_difficult) if not d],
+                         dtype=torch.float32, device=device)
+            if any(not d for d in gt_difficult)
+            else torch.zeros((0, 4), device=device))
+        gt_names_nd = [g[0] for g, d in zip(gt_full, gt_difficult) if not d]
+
+        gt_boxes_orig = (
+            torch.tensor([g[1] for g in gt_full],
+                         dtype=torch.float32, device=device)
+            if gt_full else torch.zeros((0, 4), device=device))
+
+        if len(pred_bboxes) > 0 and gt_boxes_nd.shape[0] > 0:
+            iou_pg = box_iou_xyxy(pred_bboxes, gt_boxes_nd)  # [P, G]
+            # Vectorized greedy matching: for each pred (high→low score),
+            # pick best unmatched GT with IoU≥0.5. Avoid per-element .item() calls.
+            sorted_pi    = pred_scores.argsort(descending=True)
+            gt_matched   = torch.zeros(len(gt_names_nd), dtype=torch.bool, device=device)
+            pred_matched = torch.zeros(len(pred_bboxes), dtype=torch.bool, device=device)
+            pred_lbls_np = pred_labels.cpu().numpy()
+            for pi in sorted_pi.tolist():
+                row = iou_pg[pi].clone()
+                row[gt_matched] = 0.0
+                best_iou_val, best_gi = row.max(0)
+                if best_iou_val.item() >= 0.5:
+                    lbl      = int(pred_lbls_np[pi])
                     pred_cls = (model_label_names[lbl]
                                 if lbl < len(model_label_names)
                                 else f'cls_{lbl}')
-                    false_pos_by_cls[pred_cls] += 1
+                    confusion[gt_names_nd[best_gi.item()]][pred_cls] += 1
+                    gt_matched[best_gi]  = True
+                    pred_matched[pi]     = True
+            for gi, gn in enumerate(gt_names_nd):
+                if not gt_matched[gi].item():
+                    confusion[gn]['missed'] += 1
+            for pi in (~pred_matched).nonzero(as_tuple=True)[0].tolist():
+                lbl      = int(pred_lbls_np[pi])
+                pred_cls = (model_label_names[lbl]
+                            if lbl < len(model_label_names)
+                            else f'cls_{lbl}')
+                false_pos_by_cls[pred_cls] += 1
+        elif gt_names_nd:
+            for gn in gt_names_nd:
+                confusion[gn]['missed'] += 1
+        else:
+            pred_lbls_np = pred_labels.cpu().numpy()
+            for pi in range(len(pred_bboxes)):
+                lbl      = int(pred_lbls_np[pi])
+                pred_cls = (model_label_names[lbl]
+                            if lbl < len(model_label_names)
+                            else f'cls_{lbl}')
+                false_pos_by_cls[pred_cls] += 1
 
-            # ── U-Recall compatible counter ────────────────────────────────────────
-            # Mirrors evaluator: for each non-difficult unknown GT box, check if
-            # ANY surviving unknown prediction (no score threshold — evaluator keeps
-            # all unknown preds regardless of score) has IoU >= 0.5.
-            # This is separate from the top-1 confusion matrix assignment.
-            unk_pred_mask = pred.labels == unk_cls_idx          # all unknown preds
-            unk_pred_bboxes = pred.bboxes[unk_pred_mask]        # no conf_thr filter!
-
-            for gi, (gname, gdiff) in enumerate(zip(gt_names, gt_difficult)):
-                if gdiff:
-                    continue  # skip difficult, same as evaluator
-                role = class_role(gname, base_set, novel_set)
-                if role != 'unknown':
-                    continue  # only track unknown-class GT
-                u_recall_total[gname] += 1
-                if unk_pred_bboxes.shape[0] > 0:
-                    gt_box = gt_boxes_orig[gi:gi + 1]
-                    ious_unk = box_iou_xyxy(unk_pred_bboxes, gt_box)
-                    if ious_unk.max().item() >= 0.5:
-                        u_recall_hit[gname] += 1
-
-            # ── Per-class anchor metrics ──────────────────────────────────────────
-            # Uses non-difficult GT only for consistency with confusion matrix.
-            if gt_boxes_nd.shape[0] > 0:
-                sx, sy         = float(scale[0]), float(scale[1])
-                pad_top, pad_left = float(pad[0]), float(pad[2])
-                gt_pad         = gt_boxes_nd.clone()
-                gt_pad[:, [0, 2]] = gt_pad[:, [0, 2]] * sx + pad_left
-                gt_pad[:, [1, 3]] = gt_pad[:, [1, 3]] * sy + pad_top
-
-                # Per-image slice of the batched tensors
-                flat_logits  = flat_logits_b[b]                  # [N_anc, C]
-                anchor_boxes = head.bbox_coder.decode(
-                    flat_priors[..., :2],
-                    flat_bbox_b[b:b + 1],                        # [1, N_anc, 4]
-                    flat_priors[:, [2]][..., 0])[0]              # [N_anc, 4]
-
-                anchor_scores  = flat_logits[:, -1].sigmoid()
-                tunk_scores    = flat_logits[:, -2].sigmoid()
-                known_logits   = flat_logits[:, :-2]
-                known_scores   = known_logits.sigmoid()
-                max_known_vals, _ = known_scores.max(dim=1)
-                ratio_vals     = max_known_vals / anchor_scores.clamp(min=1e-6)
-                energy_vals    = -torch.logsumexp(known_logits, dim=1)
-                log_sm         = torch.log_softmax(known_logits, dim=1)
-                entropy_vals   = -(log_sm.exp() * log_sm).sum(dim=1)
-                # all K+2 sigmoid scores for rank computation
-                all_scores     = flat_logits.sigmoid()           # [N_anc, K+2]
-
-                iou_ag = box_iou_xyxy(anchor_boxes, gt_pad)
-
-                a_np   = anchor_scores.cpu().numpy()
-                mk_np  = max_known_vals.cpu().numpy()
-                tu_np  = tunk_scores.cpu().numpy()
-                rt_np  = ratio_vals.cpu().numpy()
-                en_np  = energy_vals.cpu().numpy()
-                et_np  = entropy_vals.cpu().numpy()
-                tunk_raw_np    = flat_logits[:, -2].cpu().numpy()
-                tanchor_raw_np = flat_logits[:, -1].cpu().numpy()
-                all_scores_np  = all_scores.cpu().numpy()        # [N_anc, K+2]
-
-                # per-class logit distributions: store per-known-class raw logit
-                # keyed by class name so we can compute mean±std per GT class
-                known_logits_np = known_logits.cpu().numpy()     # [N_anc, K]
-
-                for gi in range(len(gt_names_nd)):
-                    best_iou_val, best_idx = iou_ag[:, gi].max(dim=0)
-                    if best_iou_val.item() >= 0.5:
-                        idx   = best_idx.item()
-                        gname = gt_names_nd[gi]
-                        role  = class_role(gname, base_set, novel_set)
-                        gt_lbl = (all_class_names.index(gname)
-                                  if gname in all_class_names else -1)
-
-                        # correct_score: what the model *should* fire for this GT
-                        #   base/novel  → sigmoid of that class's known channel
-                        #   unknown     → T_unk sigmoid (channel K, index -2)
-                        if role == 'unknown':
-                            correct_score = float(tu_np[idx])
-                            correct_raw   = float(tunk_raw_np[idx])
-                            # rank of T_unk channel (index known_count) among all K+2
-                            correct_rank  = int(
-                                (all_scores_np[idx] > all_scores_np[idx, known_count])
-                                .sum()) + 1
-                        elif 0 <= gt_lbl < known_count:
-                            correct_score = float(known_scores[idx, gt_lbl].item())
-                            correct_raw   = float(known_logits_np[idx, gt_lbl])
-                            correct_rank  = int(
-                                (all_scores_np[idx] > all_scores_np[idx, gt_lbl])
-                                .sum()) + 1
-                        else:
-                            correct_score = 0.0
-                            correct_raw   = 0.0
-                            correct_rank  = known_count + 2
-
-                        vals = (a_np[idx], mk_np[idx], tu_np[idx],
-                                rt_np[idx], en_np[idx], et_np[idx],
-                                float(tunk_raw_np[idx]),
-                                float(tanchor_raw_np[idx]),
-                                correct_score, float(correct_rank))
-                        for k, v in zip(metric_names, vals):
-                            per_cls_metrics[gname][k].append(float(v))
-                        per_cls_metrics[gname].setdefault('_correct_raw', []).append(correct_raw)
-                        # per-channel raw logit for overlap analysis
-                        per_cls_metrics[gname].setdefault('_raw_logits_by_channel', []).append(
-                            known_logits_np[idx].tolist())
-
-            n_proc += 1
-            if n_proc % 500 == 0:
-                print(f'  processed {n_proc}/{n_imgs}  (skipped {n_skip})')
-
-    # ── Main loop: accumulate into batches, flush when full ───────────────
-    batch_buf = []
-    with torch.no_grad():
-        for i in range(n_imgs):
-            img_id   = test_ids[i]
-            img_path = os.path.join(img_dir, img_id + img_ext)
-            ann_path = os.path.join(ann_dir, img_id + '.xml')
-
-            if not os.path.exists(img_path):
-                n_skip += 1
+        # U-Recall
+        unk_pred_mask   = pred.labels == unk_cls_idx
+        unk_pred_bboxes = pred.bboxes[unk_pred_mask]
+        for gi, (gname, gdiff) in enumerate(zip(gt_names, gt_difficult)):
+            if gdiff:
                 continue
-
-            try:
-                data = pipeline(dict(img_path=img_path, img_id=img_id,
-                                     instances=[]))
-            except Exception as e:
-                print(f'  [skip] {img_id}: {e}')
-                n_skip += 1
+            role = class_role(gname, base_set, novel_set)
+            if role != 'unknown':
                 continue
+            u_recall_total[gname] += 1
+            if unk_pred_bboxes.shape[0] > 0:
+                gt_box = gt_boxes_orig[gi:gi + 1]
+                if box_iou_xyxy(unk_pred_bboxes, gt_box).max().item() >= 0.5:
+                    u_recall_hit[gname] += 1
 
-            # Keep on CPU until we stack the batch — avoids per-image
-            # .to(device) overhead and lets the GPU do one big transfer.
-            batch_buf.append((
-                img_id,
-                data['inputs'].unsqueeze(0),                     # [1,C,H,W] uint8 CPU
-                data['data_samples'],
-                data['data_samples'].metainfo,
-                np.asarray(data['data_samples'].metainfo['scale_factor']),
-                np.asarray(data['data_samples'].metainfo.get(
-                    'pad_param', np.zeros(4, dtype=np.float32))),
-                ann_path,
-            ))
+        # Per-class anchor metrics
+        if gt_boxes_nd.shape[0] > 0:
+            sx, sy        = float(scale[0]), float(scale[1])
+            pad_top, pad_left = float(pad[0]), float(pad[2])
+            gt_pad        = gt_boxes_nd.clone()
+            gt_pad[:, [0, 2]] = gt_pad[:, [0, 2]] * sx + pad_left
+            gt_pad[:, [1, 3]] = gt_pad[:, [1, 3]] * sy + pad_top
 
-            if len(batch_buf) == args.batch_size:
-                process_batch(batch_buf)
-                batch_buf = []
+            flat_logits  = flat_logits_b[b]
+            anchor_boxes = head.bbox_coder.decode(
+                flat_priors[..., :2],
+                flat_bbox_b[b:b + 1],
+                flat_priors[:, [2]][..., 0])[0]
 
-        if batch_buf:                                            # flush remainder
-            process_batch(batch_buf)
-            batch_buf = []
+            anchor_scores  = flat_logits[:, -1].sigmoid()
+            tunk_scores    = flat_logits[:, -2].sigmoid()
+            known_logits   = flat_logits[:, :-2]
+            known_scores   = known_logits.sigmoid()
+            max_known_vals, _ = known_scores.max(dim=1)
+            ratio_vals     = max_known_vals / anchor_scores.clamp(min=1e-6)
+            energy_vals    = -torch.logsumexp(known_logits, dim=1)
+            log_sm         = torch.log_softmax(known_logits, dim=1)
+            entropy_vals   = -(log_sm.exp() * log_sm).sum(dim=1)
+            all_scores     = flat_logits.sigmoid()
 
-    print(f'  processed {n_proc}/{n_imgs}  (skipped {n_skip})')
-    print(f'\n[done] {n_proc} images processed, {n_skip} skipped')
+            iou_ag = box_iou_xyxy(anchor_boxes, gt_pad)
 
-    # ══════════════════════════════════════════════════════════════════════
-    # Output
-    # ══════════════════════════════════════════════════════════════════════
+            a_np   = anchor_scores.cpu().numpy()
+            mk_np  = max_known_vals.cpu().numpy()
+            tu_np  = tunk_scores.cpu().numpy()
+            rt_np  = ratio_vals.cpu().numpy()
+            en_np  = energy_vals.cpu().numpy()
+            et_np  = entropy_vals.cpu().numpy()
+            tunk_raw_np    = flat_logits[:, -2].cpu().numpy()
+            tanchor_raw_np = flat_logits[:, -1].cpu().numpy()
+            all_scores_np  = all_scores.cpu().numpy()
+            known_logits_np = known_logits.cpu().numpy()
 
-    # ── U-Recall compatible summary ───────────────────────────────────────
-    # Matches evaluator logic: non-difficult unknown GT, any unknown prediction
-    # (no score threshold), IoU >= 0.5.
+            for gi in range(len(gt_names_nd)):
+                best_iou_val, best_idx = iou_ag[:, gi].max(dim=0)
+                if best_iou_val.item() >= 0.5:
+                    idx   = best_idx.item()
+                    gname = gt_names_nd[gi]
+                    role  = class_role(gname, base_set, novel_set)
+                    gt_lbl = (all_class_names.index(gname)
+                              if gname in all_class_names else -1)
+
+                    if role == 'unknown':
+                        correct_score = float(tu_np[idx])
+                        correct_raw   = float(tunk_raw_np[idx])
+                        correct_rank  = int(
+                            (all_scores_np[idx] > all_scores_np[idx, known_count])
+                            .sum()) + 1
+                    elif 0 <= gt_lbl < known_count:
+                        correct_score = float(known_scores[idx, gt_lbl].item())
+                        correct_raw   = float(known_logits_np[idx, gt_lbl])
+                        correct_rank  = int(
+                            (all_scores_np[idx] > all_scores_np[idx, gt_lbl])
+                            .sum()) + 1
+                    else:
+                        correct_score = 0.0
+                        correct_raw   = 0.0
+                        correct_rank  = known_count + 2
+
+                    vals = (a_np[idx], mk_np[idx], tu_np[idx],
+                            rt_np[idx], en_np[idx], et_np[idx],
+                            float(tunk_raw_np[idx]), float(tanchor_raw_np[idx]),
+                            correct_score, float(correct_rank))
+                    for k, v in zip(METRIC_NAMES, vals):
+                        per_cls_metrics[gname][k].append(float(v))
+                    per_cls_metrics[gname].setdefault('_correct_raw', []).append(correct_raw)
+                    per_cls_metrics[gname].setdefault('_raw_logits_by_channel', []).append(
+                        known_logits_np[idx].tolist())
+                    # stride of the best-matching anchor (8 / 16 / 32)
+                    per_cls_metrics[gname].setdefault('_anchor_stride', []).append(
+                        _stride_key(float(flat_priors[idx, 2].item())))
+
+        accum['n_proc'] += 1
+        # Progress print every 500 images (checked per-image so it fires at exactly 500,1000,...)
+        # Only print from the first accumulator to avoid duplicate lines in multi-run mode.
+        if accum is _primary_accum and accum['n_proc'] % 500 == 0:
+            print(f'  processed {accum["n_proc"]}/{_n_imgs_total}  '
+                  f'(skipped {accum["n_skip"]})')
+
+
+# Module-level sentinels set before processing starts (avoids closure over mutable locals)
+_primary_accum  = None
+_n_imgs_total   = 0
+
+
+# ── Result saving ─────────────────────────────────────────────────────────────
+
+def save_run_results(accum, ctx, out_dir, conf_thr):
+    os.makedirs(out_dir, exist_ok=True)
+
+    all_class_names   = ctx['all_class_names']
+    base_set, novel_set = ctx['base_set'], ctx['novel_set']
+    known_count       = ctx['known_count']
+    model_label_names = ctx['model_label_names']
+
+    confusion        = accum['confusion']
+    false_pos_by_cls = accum['false_pos_by_cls']
+    gt_counts        = accum['gt_counts']
+    gt_counts_all    = accum['gt_counts_all']
+    per_cls_metrics  = accum['per_cls_metrics']
+    u_recall_hit     = accum['u_recall_hit']
+    u_recall_total   = accum['u_recall_total']
+    n_proc           = accum['n_proc']
+    n_skip           = accum['n_skip']
+
     u_total_all = sum(u_recall_total.values())
     u_hit_all   = sum(u_recall_hit.values())
     u_recall_compat = u_hit_all / u_total_all * 100 if u_total_all > 0 else 0.0
-    print('\n' + '=' * 80)
-    print('U-RECALL COMPATIBLE  (any unknown pred, no score thr, non-difficult GT)')
-    print(f'  Should match evaluator U-Recall (expected ~79% for VOC-COCO wapr)')
-    print('=' * 80)
+
+    print(f'\n[{ctx["label"]}] ' + '=' * 70)
+    print(f'U-RECALL: {u_hit_all}/{u_total_all} = {u_recall_compat:.2f}%')
     for cls in sorted(u_recall_total.keys(), key=lambda x: -u_recall_total[x]):
         n, d = u_recall_total[cls], u_recall_hit[cls]
-        r = d / n * 100 if n > 0 else 0.0
-        print(f'  {cls:30s}: {d:5d}/{n:5d} = {r:6.2f}%')
-    print(f'  {"-" * 44}')
-    print(f'  {"TOTAL":30s}: {u_hit_all:5d}/{u_total_all:5d} = {u_recall_compat:6.2f}%')
-    print('=' * 80)
+        print(f'  {cls:30s}: {d:5d}/{n:5d} = {d/n*100 if n>0 else 0:.2f}%')
 
-    # Order GT classes: base → novel → unknown, alphabetical within role
     all_gt_cls = sorted(gt_counts.keys(), key=lambda c: (
         0 if c in base_set else 1 if c in novel_set else 2, c))
+    pred_cols  = list(model_label_names) + ['missed']
 
-    # Columns for confusion matrix: model class names + "missed"
-    pred_cols = list(model_label_names) + ['missed']
-
-    # ── Print confusion matrix summary ────────────────────────────────────
-    print('\n' + '=' * 80)
-    print('CONFUSION MATRIX  (top-5 predicted per GT class)')
-    print('=' * 80)
+    print(f'\n[{ctx["label"]}] CONFUSION MATRIX (top-5 per GT class)')
     for gt_cls in all_gt_cls:
-        role = class_role(gt_cls, base_set, novel_set)
+        role  = class_role(gt_cls, base_set, novel_set)
         total = gt_counts[gt_cls]
-        entries = sorted(confusion[gt_cls].items(), key=lambda x: -x[1])
-        top = entries[:5]
-        top_str = ', '.join(f'{c}:{n}' for c, n in top)
-        print(f'  {gt_cls:30s} ({role:7s}) N={total:6d}  {top_str}')
+        top   = sorted(confusion[gt_cls].items(), key=lambda x: -x[1])[:5]
+        print(f'  {gt_cls:30s} ({role:7s}) N={total:6d}  '
+              + ', '.join(f'{c}:{n}' for c, n in top))
 
-    # ── Write confusion_matrix.csv ────────────────────────────────────────
-    csv_path = os.path.join(args.out_dir, 'confusion_matrix.csv')
+    # confusion_matrix.csv
+    csv_path = os.path.join(out_dir, 'confusion_matrix.csv')
     with open(csv_path, 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow(['gt_class', 'role', 'total_gt'] + pred_cols)
         for gt_cls in all_gt_cls:
             role = class_role(gt_cls, base_set, novel_set)
-            row = [gt_cls, role, gt_counts[gt_cls]]
+            row  = [gt_cls, role, gt_counts[gt_cls]]
             for pc in pred_cols:
                 row.append(confusion[gt_cls].get(pc, 0))
             w.writerow(row)
-    print(f'\n[write] {csv_path}')
+    print(f'[write] {csv_path}')
 
-    # ── Print per-class anchor metrics ────────────────────────────────────
-    print('\n' + '=' * 80)
-    print('PER-CLASS ANCHOR METRICS  (best anchor per GT, IoU >= 0.5)')
-    print('=' * 80)
+    # Per-class anchor metrics
     pc_summary = {}
     for cls_name in all_gt_cls:
         d = per_cls_metrics[cls_name]
@@ -607,12 +536,11 @@ def main():
         if n == 0:
             continue
         role = class_role(cls_name, base_set, novel_set)
-        s = {m: percentiles(d[m]) for m in metric_names}
-        # per-channel raw logit mean±std across all known classes
+        s = {m: percentiles(d[m]) for m in METRIC_NAMES}
         ch_stats = {}
         raw_mat = d.get('_raw_logits_by_channel', [])
         if raw_mat:
-            arr = np.asarray(raw_mat)          # [N_gt, K]
+            arr = np.asarray(raw_mat)
             for ci, cname in enumerate(all_class_names[:known_count]):
                 ch_stats[cname] = {
                     'mean': float(arr[:, ci].mean()),
@@ -622,60 +550,160 @@ def main():
             'role': role, 'count': n, 'stats': s,
             'per_channel_logit': ch_stats,
         }
-        print(f'  {cls_name:30s} ({role:7s}) N={n:5d} '
-              f'anchor[μ={s["anchor"]["mean"]:.3f} σ={s["anchor"]["std"]:.3f}] '
-              f'maxK[μ={s["max_known"]["mean"]:.3f}] '
-              f'Tunk[μ={s["tunk"]["mean"]:.3f}] tunk_raw[μ={s["tunk_raw"]["mean"]:.2f}] '
-              f'tanchor_raw[μ={s["tanchor_raw"]["mean"]:.2f}] '
-              f'correct_score[μ={s["correct_cls_score"]["mean"]:.3f}] '
-              f'rank[μ={s["correct_cls_rank"]["mean"]:.1f} '
-              f'p50={s["correct_cls_rank"]["p50"]:.0f}] '
-              f'ratio[μ={s["ratio"]["mean"]:.3f}] '
-              f'energy[μ={s["energy"]["mean"]:.3f}]')
-        # store correct_raw in summary too
         cr = d.get('_correct_raw', [])
         if cr:
             pc_summary[cls_name]['correct_raw_stats'] = percentiles(cr)
 
-    # ── Print ROLE-CORRECT SCORE TABLE ───────────────────────────────────
-    # base/novel → correct class channel score + raw logit
-    # unknown    → T_unk score + raw logit
-    # This directly answers: how well does the model score the RIGHT channel?
-    print('\n' + '=' * 80)
-    print('ROLE-CORRECT SCORE TABLE')
-    print('  base/novel: correct_class_channel sigmoid + raw_logit')
-    print('  unknown:    T_unk sigmoid + raw_logit')
+    # ROLE-CORRECT SCORE TABLE
+    print(f'\n[{ctx["label"]}] ROLE-CORRECT SCORE TABLE')
     print(f'  {"class":30s} {"role":7s} {"N":>6s}  '
-          f'{"correct_sig_μ":>13s}  {"correct_sig_p50":>15s}  '
-          f'{"correct_raw_μ":>13s}  {"rank_μ":>6s}  {"rank_p50":>8s}')
-    print('=' * 80)
+          f'{"correct_sig_μ":>13s}  {"rank_μ":>6s}  {"rank_p50":>8s}')
     for cls_name in all_gt_cls:
         if cls_name not in pc_summary:
             continue
         ps = pc_summary[cls_name]
         s  = ps['stats']
-        cr = ps.get('correct_raw_stats', {})
-        role = ps['role']
-        n    = ps['count']
-        sig_mean  = s['correct_cls_score']['mean']
-        sig_p50   = s['correct_cls_score']['p50']
-        raw_mean  = cr.get('mean', float('nan'))
-        rank_mean = s['correct_cls_rank']['mean']
-        rank_p50  = s['correct_cls_rank']['p50']
-        print(f'  {cls_name:30s} {role:7s} {n:6d}  '
-              f'{sig_mean:13.4f}  {sig_p50:15.4f}  '
-              f'{raw_mean:13.2f}  {rank_mean:6.1f}  {rank_p50:8.0f}')
+        print(f'  {cls_name:30s} {ps["role"]:7s} {ps["count"]:6d}  '
+              f'{s["correct_cls_score"]["mean"]:13.4f}  '
+              f'{s["correct_cls_rank"]["mean"]:6.1f}  '
+              f'{s["correct_cls_rank"]["p50"]:8.0f}')
 
-    # ── Print false positives ─────────────────────────────────────────────
-    print('\n' + '=' * 80)
-    print('FALSE POSITIVES  (predictions with no GT match, by predicted class)')
-    print('=' * 80)
-    for cls_name in sorted(false_pos_by_cls.keys(),
-                           key=lambda c: -false_pos_by_cls[c]):
-        print(f'  {cls_name:30s} {false_pos_by_cls[cls_name]:6d}')
+    # ── Unknown-class Tobj / Tunk distribution by anchor stride ──────────────
+    unk_classes = [c for c in all_gt_cls
+                   if class_role(c, base_set, novel_set) == 'unknown'
+                   and c in per_cls_metrics]
 
-    # ── Write false_positives.csv ─────────────────────────────────────────
-    fp_path = os.path.join(args.out_dir, 'false_positives.csv')
+    unk_stride_data = {}   # cls → stride → {'tobj': [...], 'tunk': [...]}
+    all_strides_seen = set()
+    for cls_name in unk_classes:
+        d = per_cls_metrics[cls_name]
+        strides = d.get('_anchor_stride', [])
+        tobj    = d.get('anchor', [])
+        tunk    = d.get('tunk', [])
+        if not strides:
+            continue
+        by_stride = {}
+        for s, to, tu in zip(strides, tobj, tunk):
+            by_stride.setdefault(s, {'tobj': [], 'tunk': []})
+            by_stride[s]['tobj'].append(to)
+            by_stride[s]['tunk'].append(tu)
+            all_strides_seen.add(s)
+        unk_stride_data[cls_name] = by_stride
+
+    sorted_strides = sorted(all_strides_seen)
+
+    if unk_stride_data:
+        print(f'\n[{ctx["label"]}] UNKNOWN CLASS Tobj / Tunk DISTRIBUTION BY ANCHOR STRIDE')
+        print(f'  Strides observed: {sorted_strides}')
+        hdr = (f'  {"class":35s} {"N":>5s}  '
+               + '  '.join(f'stride={s:<2d}  Tobj μ±σ (p50)   Tunk μ±σ (p50)'
+                            for s in sorted_strides))
+        print(hdr)
+        for cls_name in unk_classes:
+            if cls_name not in unk_stride_data:
+                continue
+            by_stride = unk_stride_data[cls_name]
+            total = sum(len(v['tobj']) for v in by_stride.values())
+            row = f'  {cls_name:35s} {total:>5d}'
+            for s in sorted_strides:
+                if s not in by_stride:
+                    row += '  ' + ' ' * 44
+                    continue
+                to_arr = np.asarray(by_stride[s]['tobj'])
+                tu_arr = np.asarray(by_stride[s]['tunk'])
+                to_p50 = float(np.percentile(to_arr, 50))
+                tu_p50 = float(np.percentile(tu_arr, 50))
+                n = len(to_arr)
+                row += (f'  [{n:4d}] '
+                        f'Tobj {to_arr.mean():.3f}±{to_arr.std():.3f}({to_p50:.3f})  '
+                        f'Tunk {tu_arr.mean():.3f}±{tu_arr.std():.3f}({tu_p50:.3f})')
+            print(row)
+
+        # aggregate across all unknown classes
+        all_tobj_by_stride = defaultdict(list)
+        all_tunk_by_stride = defaultdict(list)
+        for cls_name in unk_classes:
+            if cls_name not in unk_stride_data:
+                continue
+            for s, vals in unk_stride_data[cls_name].items():
+                all_tobj_by_stride[s].extend(vals['tobj'])
+                all_tunk_by_stride[s].extend(vals['tunk'])
+
+        print(f'\n  --- AGGREGATE over all {len(unk_classes)} unknown classes ---')
+        for s in sorted_strides:
+            if s not in all_tobj_by_stride:
+                continue
+            to_arr = np.asarray(all_tobj_by_stride[s])
+            tu_arr = np.asarray(all_tunk_by_stride[s])
+            print(f'  stride={s:<2d}  N={len(to_arr):6d}'
+                  f'  Tobj: mean={to_arr.mean():.4f} std={to_arr.std():.4f}'
+                  f'  p10={np.percentile(to_arr,10):.4f} p25={np.percentile(to_arr,25):.4f}'
+                  f'  p50={np.percentile(to_arr,50):.4f} p75={np.percentile(to_arr,75):.4f}'
+                  f'  p90={np.percentile(to_arr,90):.4f}'
+                  f'  ||  Tunk: mean={tu_arr.mean():.4f} std={tu_arr.std():.4f}'
+                  f'  p50={np.percentile(tu_arr,50):.4f} p90={np.percentile(tu_arr,90):.4f}')
+
+        # Save unknown_tobj_by_stride.csv
+        unk_stride_csv = os.path.join(out_dir, 'unknown_tobj_by_stride.csv')
+        with open(unk_stride_csv, 'w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(['class', 'stride', 'n',
+                        'tobj_mean', 'tobj_std',
+                        'tobj_p10', 'tobj_p25', 'tobj_p50', 'tobj_p75', 'tobj_p90', 'tobj_p95',
+                        'tunk_mean', 'tunk_std',
+                        'tunk_p10', 'tunk_p25', 'tunk_p50', 'tunk_p75', 'tunk_p90', 'tunk_p95',
+                        'tobj_min', 'tobj_max', 'tunk_min', 'tunk_max'])
+            for cls_name in unk_classes + ['__ALL_UNKNOWNS__']:
+                if cls_name == '__ALL_UNKNOWNS__':
+                    by_stride_iter = {s: {'tobj': all_tobj_by_stride[s],
+                                          'tunk': all_tunk_by_stride[s]}
+                                      for s in sorted_strides if s in all_tobj_by_stride}
+                else:
+                    if cls_name not in unk_stride_data:
+                        continue
+                    by_stride_iter = unk_stride_data[cls_name]
+                for s in sorted_strides:
+                    if s not in by_stride_iter:
+                        continue
+                    to_arr = np.asarray(by_stride_iter[s]['tobj'])
+                    tu_arr = np.asarray(by_stride_iter[s]['tunk'])
+                    w.writerow([
+                        cls_name, s, len(to_arr),
+                        round(float(to_arr.mean()), 6), round(float(to_arr.std()), 6),
+                        *[round(float(np.percentile(to_arr, q)), 6) for q in (10,25,50,75,90,95)],
+                        round(float(tu_arr.mean()), 6), round(float(tu_arr.std()), 6),
+                        *[round(float(np.percentile(tu_arr, q)), 6) for q in (10,25,50,75,90,95)],
+                        round(float(to_arr.min()), 6), round(float(to_arr.max()), 6),
+                        round(float(tu_arr.min()), 6), round(float(tu_arr.max()), 6),
+                    ])
+        print(f'[write] {unk_stride_csv}')
+
+        # Persist in JSON
+        unk_stride_json = {}
+        for cls_name in unk_classes + ['__ALL_UNKNOWNS__']:
+            if cls_name == '__ALL_UNKNOWNS__':
+                by_s = {s: {'tobj': all_tobj_by_stride[s], 'tunk': all_tunk_by_stride[s]}
+                        for s in sorted_strides if s in all_tobj_by_stride}
+            else:
+                if cls_name not in unk_stride_data:
+                    continue
+                by_s = unk_stride_data[cls_name]
+            unk_stride_json[cls_name] = {}
+            for s, vals in by_s.items():
+                to_arr = np.asarray(vals['tobj'])
+                tu_arr = np.asarray(vals['tunk'])
+                unk_stride_json[cls_name][str(s)] = {
+                    'n': len(to_arr),
+                    'tobj': {**percentiles(to_arr.tolist())},
+                    'tunk': {**percentiles(tu_arr.tolist())},
+                }
+    else:
+        unk_stride_json = {}
+        print(f'\n[{ctx["label"]}] No unknown GT objects with matched anchors found '
+              f'— skipping Tobj stride analysis.')
+
+    # false_positives.csv
+    fp_path = os.path.join(out_dir, 'false_positives.csv')
     with open(fp_path, 'w', newline='') as f:
         w = csv.writer(f)
         w.writerow(['predicted_class', 'count'])
@@ -684,38 +712,191 @@ def main():
             w.writerow([cls_name, false_pos_by_cls[cls_name]])
     print(f'[write] {fp_path}')
 
-    # ── Write test_analysis.json ──────────────────────────────────────────
-    json_path = os.path.join(args.out_dir, 'test_analysis.json')
+    # test_analysis.json
+    json_path = os.path.join(out_dir, 'test_analysis.json')
     out = {
-        'config': args.config,
-        'checkpoint': args.checkpoint,
-        'dataset': dataset_name,
-        'conf_thr': args.conf_thr,
+        'label':    ctx.get('label', ''),
+        'config':   ctx['cfg_path'],
+        'checkpoint': ctx['ckpt_path'],
+        'dataset':  ctx['dataset_name'],
+        'conf_thr': conf_thr,
         'num_images_processed': n_proc,
-        'num_images_skipped': n_skip,
-        'base_classes': base_classes,
-        'novel_classes': novel_classes,
+        'num_images_skipped':   n_skip,
+        'base_classes':  ctx['base_classes'],
+        'novel_classes': ctx['novel_classes'],
         'model_label_names': model_label_names,
-        'gt_counts': dict(gt_counts),             # non-difficult only
-        'gt_counts_all': dict(gt_counts_all),     # including difficult
-        'confusion': {k: dict(v) for k, v in confusion.items()},
+        'gt_counts':     dict(gt_counts),
+        'gt_counts_all': dict(gt_counts_all),
+        'confusion':     {k: dict(v) for k, v in confusion.items()},
         'false_positives': dict(false_pos_by_cls),
         'per_class_metrics': pc_summary,
         'u_recall_compat': {
             'total': u_total_all,
-            'hit': u_hit_all,
+            'hit':   u_hit_all,
             'recall_pct': round(u_recall_compat, 4),
             'per_class': {
-                cls: {'hit': u_recall_hit[cls], 'total': u_recall_total[cls],
-                      'recall_pct': round(u_recall_hit[cls] / u_recall_total[cls] * 100, 2)
-                      if u_recall_total[cls] > 0 else 0.0}
+                cls: {
+                    'hit': u_recall_hit[cls],
+                    'total': u_recall_total[cls],
+                    'recall_pct': round(u_recall_hit[cls] / u_recall_total[cls] * 100, 2)
+                    if u_recall_total[cls] > 0 else 0.0,
+                }
                 for cls in u_recall_total
             },
         },
+        'unknown_tobj_by_stride': unk_stride_json,
     }
     with open(json_path, 'w') as f:
         json.dump(out, f, indent=2)
     print(f'[write] {json_path}')
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def main():
+    args = parse_args()
+
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+
+    from mmengine.config import Config
+    from mmengine.registry import init_default_scope
+    import mmyolo          # noqa: F401
+    import yolo_world      # noqa: F401
+    init_default_scope('mmyolo')
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # ── Resolve runs list ──────────────────────────────────────────────────
+    if args.runs_json:
+        with open(args.runs_json) as f:
+            runs = json.load(f)
+        assert runs, f'runs-json {args.runs_json} is empty'
+    else:
+        assert args.config and args.checkpoint and args.out_dir, \
+            'Provide --config, --checkpoint, --out-dir (or --runs-json for multi mode)'
+        runs = [{'label': 'analysis',
+                 'config': args.config,
+                 'checkpoint': args.checkpoint,
+                 'out_dir': args.out_dir}]
+
+    print('=' * 80)
+    print(f'OWOD TEST-SET ANALYSIS  —  {len(runs)} run(s)')
+    for r in runs:
+        print(f'  [{r["label"]}]  config={r["config"]}')
+        print(f'           ckpt={r["checkpoint"]}')
+        print(f'           out ={r["out_dir"]}')
+    print('=' * 80)
+
+    # ── Load all model contexts ────────────────────────────────────────────
+    print('\n[init] Loading models...')
+    ctxs = []
+    for r in runs:
+        print(f'  [{r["label"]}] {r["config"]}  +  {r["checkpoint"]}')
+        ctx = build_model_ctx(r['config'], r['checkpoint'], device)
+        ctx['label']   = r['label']
+        ctx['out_dir'] = r['out_dir']
+        ctxs.append(ctx)
+        print(f'    dataset={ctx["dataset_name"]}  known={ctx["known_count"]} '
+              f'(prev={ctx["num_prev"]} cur={ctx["num_cur"]})')
+
+    # Use FIRST run's config for dataset/image setup (all runs must share same dataset)
+    primary = ctxs[0]
+    dataset_name    = primary['dataset_name']
+    data_root       = primary['data_root']
+    test_image_set  = primary['test_image_set']
+
+    test_id_path = os.path.join(
+        data_root, 'ImageSets', dataset_name, f'{test_image_set}.txt')
+    with open(test_id_path) as f:
+        test_ids = [l.strip() for l in f if l.strip()]
+
+    img_dir = os.path.join(data_root, 'JPEGImages', dataset_name)
+    ann_dir = os.path.join(data_root, 'Annotations', dataset_name)
+
+    img_ext = '.jpg'
+    for ext in ('.jpg', '.jpeg', '.png'):
+        if os.path.exists(os.path.join(img_dir, test_ids[0] + ext)):
+            img_ext = ext
+            break
+
+    pipeline = build_pipeline(primary)
+
+    n_imgs = len(test_ids) if args.num_images == 0 else min(args.num_images, len(test_ids))
+    print(f'\n[data] {n_imgs} test images from {test_id_path}  (ext={img_ext})')
+    print(f'       conf_thr={args.conf_thr}  batch_size={args.batch_size}')
+    print(f'       Each batch processed through ALL {len(ctxs)} model(s).')
+
+    # ── Per-run accumulators ───────────────────────────────────────────────
+    accums = [init_accum() for _ in ctxs]
+
+    # Set module-level sentinels so process_batch_with_ctx can print progress
+    global _primary_accum, _n_imgs_total
+    _primary_accum = accums[0]
+    _n_imgs_total  = n_imgs
+
+    # ── Main loop: load batch → run ALL models → repeat ───────────────────
+    batch_buf = []
+
+    def flush_batch(buf):
+        if not buf:
+            return
+        with torch.no_grad():
+            for ctx, accum in zip(ctxs, accums):
+                process_batch_with_ctx(buf, ctx, accum, device, args.conf_thr)
+
+    for i in range(n_imgs):
+        img_id   = test_ids[i]
+        img_path = os.path.join(img_dir, img_id + img_ext)
+        ann_path = os.path.join(ann_dir, img_id + '.xml')
+
+        if not os.path.exists(img_path):
+            for accum in accums:
+                accum['n_skip'] += 1
+            continue
+
+        try:
+            data = pipeline(dict(img_path=img_path, img_id=img_id, instances=[]))
+        except Exception as e:
+            print(f'  [skip] {img_id}: {e}')
+            for accum in accums:
+                accum['n_skip'] += 1
+            continue
+
+        batch_buf.append((
+            img_id,
+            data['inputs'].unsqueeze(0),
+            data['data_samples'],
+            data['data_samples'].metainfo,
+            np.asarray(data['data_samples'].metainfo['scale_factor']),
+            np.asarray(data['data_samples'].metainfo.get(
+                'pad_param', np.zeros(4, dtype=np.float32))),
+            ann_path,
+        ))
+
+        if len(batch_buf) == args.batch_size:
+            flush_batch(batch_buf)
+            batch_buf = []
+
+    flush_batch(batch_buf)
+
+    print(f'\n[done] {accums[0]["n_proc"]}/{n_imgs} images processed, '
+          f'{accums[0]["n_skip"]} skipped')
+
+    # ── Save results for each run ──────────────────────────────────────────
+    print('\n' + '=' * 80)
+    print('SAVING RESULTS')
+    print('=' * 80)
+    for ctx, accum in zip(ctxs, accums):
+        print(f'\n── [{ctx["label"]}]  →  {ctx["out_dir"]}')
+        save_run_results(accum, ctx, ctx['out_dir'], args.conf_thr)
+
+    print('\n' + '=' * 80)
+    print('ALL ANALYSES COMPLETE')
+    for ctx in ctxs:
+        print(f'  [{ctx["label"]}]  {ctx["out_dir"]}')
+    print('=' * 80)
 
 
 if __name__ == '__main__':

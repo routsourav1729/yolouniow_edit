@@ -1,0 +1,70 @@
+test_class,N,prompt,winner_rate,mean_score
+bicycle,21977,bicycle,0.3835,0.0421
+bicycle,21977,bike,0.1905,0.0368
+bicycle,21977,pedal bicycle,0.4260,0.0200
+motorcycle,26271,motorcycle,0.2158,0.0310
+motorcycle,26271,motorbike,0.1968,0.0304
+motorcycle,26271,two wheeler,0.5874,0.0137
+car,275770,car,0.5863,0.0233
+car,275770,sedan,0.0498,0.0170
+car,275770,passenger car,0.3639,0.0064
+bus_bendy,450,articulated bus,0.3756,0.0175
+bus_bendy,450,bendy bus,0.4333,0.0216
+bus_bendy,450,accordion bus,0.1911,0.0083
+bus_rigid,17381,bus,0.0959,0.0255
+bus_rigid,17381,city bus,0.1694,0.0214
+bus_rigid,17381,passenger bus,0.7347,0.0200
+truck,64305,truck,0.1464,0.0231
+truck,64305,lorry,0.0139,0.0157
+truck,64305,cargo truck,0.8397,0.0144
+ambulance,58,ambulance,0.0862,0.0116
+ambulance,58,emergency ambulance,0.3103,0.0192
+ambulance,58,medical van,0.6034,0.0260
+police_car,712,police car,0.2430,0.0136
+police_car,712,patrol car,0.5829,0.0115
+police_car,712,police vehicle,0.1742,0.0086
+construction_vehicle,10708,construction vehicle,0.4947,0.0120
+construction_vehicle,10708,bulldozer,0.2013,0.0058
+construction_vehicle,10708,excavator,0.3041,0.0101
+trailer,6390,trailer,0.5182,0.0099
+trailer,6390,semi trailer,0.3942,0.0113
+trailer,6390,cargo trailer,0.0876,0.0088
+adult_pedestrian,70123,adult pedestrian,0.3247,0.0251
+adult_pedestrian,70123,walking person,0.3768,0.0288
+adult_pedestrian,70123,adult,0.2984,0.0032
+child_pedestrian,549,child,0.2113,0.0169
+child_pedestrian,549,kid walking,0.2441,0.0165
+child_pedestrian,549,young pedestrian,0.5446,0.0288
+wheelchair_user,15,wheelchair user,0.4000,0.0206
+wheelchair_user,15,person in wheelchair,0.4667,0.0234
+wheelchair_user,15,wheelchair,0.1333,0.0020
+stroller,264,baby stroller,0.2121,0.0566
+stroller,264,pushchair,0.6439,0.0725
+stroller,264,pram,0.1439,0.0439
+personal_mobility,931,electric scooter,0.2728,0.0057
+personal_mobility,931,personal mobility device,0.6455,0.0059
+personal_mobility,931,hoverboard,0.0816,0.0007
+police_officer,406,police officer,0.4310,0.0164
+police_officer,406,uniformed officer,0.2882,0.0155
+police_officer,406,law enforcement officer,0.2808,0.0169
+construction_worker,8001,construction worker,0.1510,0.0226
+construction_worker,8001,hard hat worker,0.4517,0.0173
+construction_worker,8001,site worker,0.3973,0.0229
+barrier,73297,road barrier,0.3105,0.0027
+barrier,73297,concrete barrier,0.2996,0.0042
+barrier,73297,traffic barrier,0.3898,0.0022
+traffic_cone,44944,traffic cone,0.3426,0.0256
+traffic_cone,44944,orange cone,0.0816,0.0149
+traffic_cone,44944,road cone,0.5758,0.0157
+pushable_object,3317,pushable object,0.3702,0.0042
+pushable_object,3317,wheeled cart,0.2719,0.0096
+pushable_object,3317,trolley,0.3579,0.0083
+debris,3075,road debris,0.4569,0.0003
+debris,3075,fallen object,0.5034,0.0009
+debris,3075,rubble on road,0.0397,0.0002
+bicycle_rack,5932,bicycle rack,0.4462,0.0063
+bicycle_rack,5932,bike stand,0.2197,0.0013
+bicycle_rack,5932,cycle parking rack,0.3341,0.0077
+animal,134,animal,0.1194,0.0135
+animal,134,dog,0.8358,0.0346
+animal,134,cat,0.0448,0.0051

@@ -1,0 +1,668 @@
+{
+  "experiment_tag": "v1",
+  "config": "configs/test/nuimages_prompt_eval.yaml",
+  "checkpoint": "work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_nuowodb_train_task2_10shot_seed1/best_owod_Both_epoch_10.pth",
+  "num_images_processed": 14747,
+  "iou_threshold": 0.5,
+  "split": "test",
+  "test_classes": [
+    {
+      "name": "bicycle",
+      "gt_alias": [
+        "vehicle.bicycle"
+      ],
+      "prompts": [
+        "bicycle",
+        "bike",
+        "pedal bicycle"
+      ]
+    },
+    {
+      "name": "motorcycle",
+      "gt_alias": [
+        "vehicle.motorcycle"
+      ],
+      "prompts": [
+        "motorcycle",
+        "motorbike",
+        "two wheeler"
+      ]
+    },
+    {
+      "name": "car",
+      "gt_alias": [
+        "vehicle.car"
+      ],
+      "prompts": [
+        "car",
+        "sedan",
+        "passenger car"
+      ]
+    },
+    {
+      "name": "bus_bendy",
+      "gt_alias": [
+        "vehicle.bus.bendy"
+      ],
+      "prompts": [
+        "articulated bus",
+        "bendy bus",
+        "accordion bus"
+      ]
+    },
+    {
+      "name": "bus_rigid",
+      "gt_alias": [
+        "vehicle.bus.rigid"
+      ],
+      "prompts": [
+        "bus",
+        "city bus",
+        "passenger bus"
+      ]
+    },
+    {
+      "name": "truck",
+      "gt_alias": [
+        "vehicle.truck"
+      ],
+      "prompts": [
+        "truck",
+        "lorry",
+        "cargo truck"
+      ]
+    },
+    {
+      "name": "ambulance",
+      "gt_alias": [
+        "vehicle.emergency.ambulance"
+      ],
+      "prompts": [
+        "ambulance",
+        "emergency ambulance",
+        "medical van"
+      ]
+    },
+    {
+      "name": "police_car",
+      "gt_alias": [
+        "vehicle.emergency.police"
+      ],
+      "prompts": [
+        "police car",
+        "patrol car",
+        "police vehicle"
+      ]
+    },
+    {
+      "name": "construction_vehicle",
+      "gt_alias": [
+        "vehicle.construction"
+      ],
+      "prompts": [
+        "construction vehicle",
+        "bulldozer",
+        "excavator"
+      ]
+    },
+    {
+      "name": "trailer",
+      "gt_alias": [
+        "vehicle.trailer"
+      ],
+      "prompts": [
+        "trailer",
+        "semi trailer",
+        "cargo trailer"
+      ]
+    },
+    {
+      "name": "adult_pedestrian",
+      "gt_alias": [
+        "human.pedestrian.adult"
+      ],
+      "prompts": [
+        "adult pedestrian",
+        "walking person",
+        "adult"
+      ]
+    },
+    {
+      "name": "child_pedestrian",
+      "gt_alias": [
+        "human.pedestrian.child"
+      ],
+      "prompts": [
+        "child",
+        "kid walking",
+        "young pedestrian"
+      ]
+    },
+    {
+      "name": "wheelchair_user",
+      "gt_alias": [
+        "human.pedestrian.wheelchair"
+      ],
+      "prompts": [
+        "wheelchair user",
+        "person in wheelchair",
+        "wheelchair"
+      ]
+    },
+    {
+      "name": "stroller",
+      "gt_alias": [
+        "human.pedestrian.stroller"
+      ],
+      "prompts": [
+        "baby stroller",
+        "pushchair",
+        "pram"
+      ]
+    },
+    {
+      "name": "personal_mobility",
+      "gt_alias": [
+        "human.pedestrian.personal_mobility"
+      ],
+      "prompts": [
+        "electric scooter",
+        "personal mobility device",
+        "hoverboard"
+      ]
+    },
+    {
+      "name": "police_officer",
+      "gt_alias": [
+        "human.pedestrian.police_officer"
+      ],
+      "prompts": [
+        "police officer",
+        "uniformed officer",
+        "law enforcement officer"
+      ]
+    },
+    {
+      "name": "construction_worker",
+      "gt_alias": [
+        "human.pedestrian.construction_worker"
+      ],
+      "prompts": [
+        "construction worker",
+        "hard hat worker",
+        "site worker"
+      ]
+    },
+    {
+      "name": "barrier",
+      "gt_alias": [
+        "movable_object.barrier"
+      ],
+      "prompts": [
+        "road barrier",
+        "concrete barrier",
+        "traffic barrier"
+      ]
+    },
+    {
+      "name": "traffic_cone",
+      "gt_alias": [
+        "movable_object.trafficcone"
+      ],
+      "prompts": [
+        "traffic cone",
+        "orange cone",
+        "road cone"
+      ]
+    },
+    {
+      "name": "pushable_object",
+      "gt_alias": [
+        "movable_object.pushable_pullable"
+      ],
+      "prompts": [
+        "pushable object",
+        "wheeled cart",
+        "trolley"
+      ]
+    },
+    {
+      "name": "debris",
+      "gt_alias": [
+        "movable_object.debris"
+      ],
+      "prompts": [
+        "road debris",
+        "fallen object",
+        "rubble on road"
+      ]
+    },
+    {
+      "name": "bicycle_rack",
+      "gt_alias": [
+        "static_object.bicycle_rack"
+      ],
+      "prompts": [
+        "bicycle rack",
+        "bike stand",
+        "cycle parking rack"
+      ]
+    },
+    {
+      "name": "animal",
+      "gt_alias": [
+        "animal"
+      ],
+      "prompts": [
+        "animal",
+        "dog",
+        "cat"
+      ]
+    }
+  ],
+  "gt_classes_seen": [
+    "animal",
+    "human.pedestrian.adult",
+    "human.pedestrian.child",
+    "human.pedestrian.construction_worker",
+    "human.pedestrian.personal_mobility",
+    "human.pedestrian.police_officer",
+    "human.pedestrian.stroller",
+    "human.pedestrian.wheelchair",
+    "movable_object.barrier",
+    "movable_object.debris",
+    "movable_object.pushable_pullable",
+    "movable_object.trafficcone",
+    "static_object.bicycle_rack",
+    "vehicle.bicycle",
+    "vehicle.bus.bendy",
+    "vehicle.bus.rigid",
+    "vehicle.car",
+    "vehicle.construction",
+    "vehicle.ego",
+    "vehicle.emergency.ambulance",
+    "vehicle.emergency.police",
+    "vehicle.motorcycle",
+    "vehicle.trailer",
+    "vehicle.truck"
+  ],
+  "counts_per_gt": {
+    "animal": 134,
+    "human.pedestrian.adult": 70123,
+    "human.pedestrian.child": 549,
+    "human.pedestrian.construction_worker": 8001,
+    "human.pedestrian.personal_mobility": 931,
+    "human.pedestrian.police_officer": 406,
+    "human.pedestrian.stroller": 264,
+    "human.pedestrian.wheelchair": 15,
+    "movable_object.barrier": 73297,
+    "movable_object.debris": 3075,
+    "movable_object.pushable_pullable": 3317,
+    "movable_object.trafficcone": 44944,
+    "static_object.bicycle_rack": 5932,
+    "vehicle.bicycle": 21977,
+    "vehicle.bus.bendy": 450,
+    "vehicle.bus.rigid": 17381,
+    "vehicle.car": 275770,
+    "vehicle.construction": 10708,
+    "vehicle.ego": 1,
+    "vehicle.emergency.ambulance": 58,
+    "vehicle.emergency.police": 712,
+    "vehicle.motorcycle": 26271,
+    "vehicle.trailer": 6390,
+    "vehicle.truck": 64305
+  },
+  "cross_class_winner_rate": {
+    "animal": 0.2462686567164179,
+    "human.pedestrian.adult": 0.4006673987136888,
+    "human.pedestrian.child": 0.3879781420765027,
+    "human.pedestrian.construction_worker": 0.3027121609798775,
+    "human.pedestrian.personal_mobility": 0.0397422126745435,
+    "human.pedestrian.police_officer": 0.1206896551724138,
+    "human.pedestrian.stroller": 0.48863636363636365,
+    "human.pedestrian.wheelchair": 0.4666666666666667,
+    "movable_object.barrier": 0.4939219886216353,
+    "movable_object.debris": 0.05170731707317073,
+    "movable_object.pushable_pullable": 0.19776906843533312,
+    "movable_object.trafficcone": 0.7871128515485938,
+    "static_object.bicycle_rack": 0.42835468644639246,
+    "vehicle.bicycle": 0.2581335032078992,
+    "vehicle.bus.bendy": 0.07333333333333333,
+    "vehicle.bus.rigid": 0.30608135320177204,
+    "vehicle.car": 0.31797875040794865,
+    "vehicle.construction": 0.1038475905864774,
+    "vehicle.ego": null,
+    "vehicle.emergency.ambulance": 0.5517241379310345,
+    "vehicle.emergency.police": 0.3061797752808989,
+    "vehicle.motorcycle": 0.29622016672376383,
+    "vehicle.trailer": 0.4802816901408451,
+    "vehicle.truck": 0.26632454708032033
+  },
+  "cross_class_mean_margin": {
+    "animal": -0.01274457573890686,
+    "human.pedestrian.adult": 0.014361393637955189,
+    "human.pedestrian.child": 0.01946098729968071,
+    "human.pedestrian.construction_worker": 0.016555963084101677,
+    "human.pedestrian.personal_mobility": -0.03240101411938667,
+    "human.pedestrian.police_officer": -0.044174615293741226,
+    "human.pedestrian.stroller": 0.05964472144842148,
+    "human.pedestrian.wheelchair": 0.008930981159210205,
+    "movable_object.barrier": 0.0031176188495010138,
+    "movable_object.debris": -0.016537807881832123,
+    "movable_object.pushable_pullable": -0.002052569529041648,
+    "movable_object.trafficcone": 0.05077790468931198,
+    "static_object.bicycle_rack": -0.014412865042686462,
+    "vehicle.bicycle": 0.05640898644924164,
+    "vehicle.bus.bendy": -0.014222643338143826,
+    "vehicle.bus.rigid": 0.005618688650429249,
+    "vehicle.car": 0.007060000207275152,
+    "vehicle.construction": -0.0017095395596697927,
+    "vehicle.ego": null,
+    "vehicle.emergency.ambulance": 0.016712944954633713,
+    "vehicle.emergency.police": -0.00166251917835325,
+    "vehicle.motorcycle": 0.020054331049323082,
+    "vehicle.trailer": -0.00411541061475873,
+    "vehicle.truck": -9.054998372448608e-05
+  },
+  "within_class": {
+    "bicycle": {
+      "N": 21977,
+      "winner_rate": {
+        "bicycle": 0.38349183237020523,
+        "bike": 0.19051735905719616,
+        "pedal bicycle": 0.42599080857259863
+      },
+      "mean_score": {
+        "bicycle": 0.04210539907217026,
+        "bike": 0.03684186935424805,
+        "pedal bicycle": 0.01995922438800335
+      }
+    },
+    "motorcycle": {
+      "N": 26271,
+      "winner_rate": {
+        "motorcycle": 0.2158273381294964,
+        "motorbike": 0.19679494499638384,
+        "two wheeler": 0.5873777168741198
+      },
+      "mean_score": {
+        "motorcycle": 0.030958406627178192,
+        "motorbike": 0.0303903017193079,
+        "two wheeler": 0.01374479103833437
+      }
+    },
+    "car": {
+      "N": 275770,
+      "winner_rate": {
+        "car": 0.5863255611560358,
+        "sedan": 0.04976973564927294,
+        "passenger car": 0.3639047031946912
+      },
+      "mean_score": {
+        "car": 0.02331920526921749,
+        "sedan": 0.01701747626066208,
+        "passenger car": 0.006404406391084194
+      }
+    },
+    "bus_bendy": {
+      "N": 450,
+      "winner_rate": {
+        "articulated bus": 0.37555555555555553,
+        "bendy bus": 0.43333333333333335,
+        "accordion bus": 0.19111111111111112
+      },
+      "mean_score": {
+        "articulated bus": 0.017451446503400803,
+        "bendy bus": 0.02160547487437725,
+        "accordion bus": 0.00825406052172184
+      }
+    },
+    "bus_rigid": {
+      "N": 17381,
+      "winner_rate": {
+        "bus": 0.09590932627581843,
+        "city bus": 0.16938035786203326,
+        "passenger bus": 0.7347103158621483
+      },
+      "mean_score": {
+        "bus": 0.025466876104474068,
+        "city bus": 0.021372947841882706,
+        "passenger bus": 0.02002018317580223
+      }
+    },
+    "truck": {
+      "N": 64305,
+      "winner_rate": {
+        "truck": 0.14636497939507037,
+        "lorry": 0.013886945027602831,
+        "cargo truck": 0.8397480755773268
+      },
+      "mean_score": {
+        "truck": 0.023063501343131065,
+        "lorry": 0.015695063397288322,
+        "cargo truck": 0.014412276446819305
+      }
+    },
+    "ambulance": {
+      "N": 58,
+      "winner_rate": {
+        "ambulance": 0.08620689655172414,
+        "emergency ambulance": 0.3103448275862069,
+        "medical van": 0.603448275862069
+      },
+      "mean_score": {
+        "ambulance": 0.01158230658620596,
+        "emergency ambulance": 0.019182106480002403,
+        "medical van": 0.026027778163552284
+      }
+    },
+    "police_car": {
+      "N": 712,
+      "winner_rate": {
+        "police car": 0.24297752808988765,
+        "patrol car": 0.5828651685393258,
+        "police vehicle": 0.17415730337078653
+      },
+      "mean_score": {
+        "police car": 0.013646373525261879,
+        "patrol car": 0.01148560643196106,
+        "police vehicle": 0.008635050617158413
+      }
+    },
+    "construction_vehicle": {
+      "N": 10708,
+      "winner_rate": {
+        "construction vehicle": 0.4946768771012327,
+        "bulldozer": 0.20125140082181547,
+        "excavator": 0.3040717220769518
+      },
+      "mean_score": {
+        "construction vehicle": 0.012038905173540115,
+        "bulldozer": 0.005750271491706371,
+        "excavator": 0.010128943249583244
+      }
+    },
+    "trailer": {
+      "N": 6390,
+      "winner_rate": {
+        "trailer": 0.5181533646322378,
+        "semi trailer": 0.3942097026604069,
+        "cargo trailer": 0.08763693270735524
+      },
+      "mean_score": {
+        "trailer": 0.009864759631454945,
+        "semi trailer": 0.011328380554914474,
+        "cargo trailer": 0.008837884292006493
+      }
+    },
+    "adult_pedestrian": {
+      "N": 70123,
+      "winner_rate": {
+        "adult pedestrian": 0.32472940404717426,
+        "walking person": 0.376823581421217,
+        "adult": 0.29844701453160877
+      },
+      "mean_score": {
+        "adult pedestrian": 0.025148898363113403,
+        "walking person": 0.028751637786626816,
+        "adult": 0.003200792707502842
+      }
+    },
+    "child_pedestrian": {
+      "N": 549,
+      "winner_rate": {
+        "child": 0.21129326047358835,
+        "kid walking": 0.24408014571949,
+        "young pedestrian": 0.5446265938069217
+      },
+      "mean_score": {
+        "child": 0.016896434128284454,
+        "kid walking": 0.01650376245379448,
+        "young pedestrian": 0.028840869665145874
+      }
+    },
+    "wheelchair_user": {
+      "N": 15,
+      "winner_rate": {
+        "wheelchair user": 0.4,
+        "person in wheelchair": 0.4666666666666667,
+        "wheelchair": 0.13333333333333333
+      },
+      "mean_score": {
+        "wheelchair user": 0.020573878660798073,
+        "person in wheelchair": 0.023446092382073402,
+        "wheelchair": 0.0019943031948059797
+      }
+    },
+    "stroller": {
+      "N": 264,
+      "winner_rate": {
+        "baby stroller": 0.21212121212121213,
+        "pushchair": 0.6439393939393939,
+        "pram": 0.14393939393939395
+      },
+      "mean_score": {
+        "baby stroller": 0.056621599942445755,
+        "pushchair": 0.07246463000774384,
+        "pram": 0.04389730095863342
+      }
+    },
+    "personal_mobility": {
+      "N": 931,
+      "winner_rate": {
+        "electric scooter": 0.2728249194414608,
+        "personal mobility device": 0.6455424274973147,
+        "hoverboard": 0.08163265306122448
+      },
+      "mean_score": {
+        "electric scooter": 0.005652350839227438,
+        "personal mobility device": 0.005944442469626665,
+        "hoverboard": 0.0006915063131600618
+      }
+    },
+    "police_officer": {
+      "N": 406,
+      "winner_rate": {
+        "police officer": 0.43103448275862066,
+        "uniformed officer": 0.2881773399014778,
+        "law enforcement officer": 0.28078817733990147
+      },
+      "mean_score": {
+        "police officer": 0.01638142392039299,
+        "uniformed officer": 0.015507548116147518,
+        "law enforcement officer": 0.016883792355656624
+      }
+    },
+    "construction_worker": {
+      "N": 8001,
+      "winner_rate": {
+        "construction worker": 0.15098112735908012,
+        "hard hat worker": 0.45169353830771153,
+        "site worker": 0.3973253343332083
+      },
+      "mean_score": {
+        "construction worker": 0.022623160853981972,
+        "hard hat worker": 0.0172794871032238,
+        "site worker": 0.022863181307911873
+      }
+    },
+    "barrier": {
+      "N": 73297,
+      "winner_rate": {
+        "road barrier": 0.31053112678554373,
+        "concrete barrier": 0.2996439144849039,
+        "traffic barrier": 0.38982495872955236
+      },
+      "mean_score": {
+        "road barrier": 0.0026532032061368227,
+        "concrete barrier": 0.004194687120616436,
+        "traffic barrier": 0.002243275521323085
+      }
+    },
+    "traffic_cone": {
+      "N": 44944,
+      "winner_rate": {
+        "traffic cone": 0.34255962976148097,
+        "orange cone": 0.0816126735493058,
+        "road cone": 0.5758276966892133
+      },
+      "mean_score": {
+        "traffic cone": 0.025629008188843727,
+        "orange cone": 0.014863919466733932,
+        "road cone": 0.015660608187317848
+      }
+    },
+    "pushable_object": {
+      "N": 3317,
+      "winner_rate": {
+        "pushable object": 0.37021404883931264,
+        "wheeled cart": 0.27193246909858304,
+        "trolley": 0.3578534820621043
+      },
+      "mean_score": {
+        "pushable object": 0.004205784294754267,
+        "wheeled cart": 0.009629888460040092,
+        "trolley": 0.008337559178471565
+      }
+    },
+    "debris": {
+      "N": 3075,
+      "winner_rate": {
+        "road debris": 0.45691056910569106,
+        "fallen object": 0.5034146341463415,
+        "rubble on road": 0.03967479674796748
+      },
+      "mean_score": {
+        "road debris": 0.0002510470221750438,
+        "fallen object": 0.0009451151126995683,
+        "rubble on road": 0.0001725360780255869
+      }
+    },
+    "bicycle_rack": {
+      "N": 5932,
+      "winner_rate": {
+        "bicycle rack": 0.44622387053270396,
+        "bike stand": 0.2196561024949427,
+        "cycle parking rack": 0.3341200269723533
+      },
+      "mean_score": {
+        "bicycle rack": 0.006333400495350361,
+        "bike stand": 0.0012956883292645216,
+        "cycle parking rack": 0.007661490235477686
+      }
+    },
+    "animal": {
+      "N": 134,
+      "winner_rate": {
+        "animal": 0.11940298507462686,
+        "dog": 0.835820895522388,
+        "cat": 0.04477611940298507
+      },
+      "mean_score": {
+        "animal": 0.013487209565937519,
+        "dog": 0.03456873819231987,
+        "cat": 0.005057692062109709
+      }
+    }
+  }
+}

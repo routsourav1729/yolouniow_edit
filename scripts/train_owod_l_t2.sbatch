@@ -71,7 +71,7 @@ done
 if [ -z "$DATASET" ]; then
     echo "ERROR: --dataset is required."
     echo "Usage: sbatch scripts/train_owod_l_t2.sbatch --dataset DATASET"
-    echo "Available datasets: IDD, FOOD_VOC, FOOD_VOCCOCO"
+    echo "Available datasets: nuOWODB, IDD, FOOD_VOC, FOOD_VOCCOCO"
     exit 1
 fi
 
@@ -79,6 +79,7 @@ NUM_GPUS=${NUM_GPUS:-${SLURM_GPUS_ON_NODE:-1}}
 
 # ─── Route logs to dataset subfolder ─────────────────────────────────────────
 case "$DATASET" in
+    nuOWODB)       _LOG_SUBDIR=slurm_logs/nuscenes ;;
     IDD)           _LOG_SUBDIR=slurm_logs/idd ;;
     FOOD_VOCCOCO)  _LOG_SUBDIR=slurm_logs/voccoco ;;
     FOOD_VOC)      _LOG_SUBDIR=slurm_logs/voc ;;
@@ -94,6 +95,20 @@ STEM=yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod
 DATASET_LOWER=$(echo "$DATASET" | tr '[:upper:]' '[:lower:]')
 
 case $DATASET in
+    nuOWODB)
+        # nuOWODB T2 fewshot — uses dedicated T2 config (NOT the default OWOD T2 config).
+        # Fewshot split: data/OWOD/nuowodb_fewshot_tfa/seed{S}/box_{K}shot_{cls}_train.txt
+        # Embeddings: nuowodb_t2.npy (17 classes, human-readable CLIP prompts from Table 11)
+        # Anchor: nuowodb_object_tuned.npy (extracted from nuOWODB T1 checkpoint)
+        if [ -n "$CONFIG_OVERRIDE" ]; then
+            CONFIG="$CONFIG_OVERRIDE"
+        else
+            CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_nuowodb_t2.py
+        fi
+        EMBED_DIR=embeddings/uniow-l
+        EMBED_PREFIX=nuowodb
+        FEWSHOT_DIR=data/OWOD/nuowodb_fewshot_tfa
+        ;;
     IDD)
         if [ -n "$CONFIG_OVERRIDE" ]; then
             CONFIG="$CONFIG_OVERRIDE"
@@ -134,7 +149,7 @@ case $DATASET in
         FEWSHOT_DIR=data/OWOD/voccocosplit
         ;;
     *)
-        echo "ERROR: Unknown dataset '$DATASET'. Available: IDD, FOOD_VOC, FOOD_VOCCOCO"
+        echo "ERROR: Unknown dataset '$DATASET'. Available: nuOWODB, IDD, FOOD_VOC, FOOD_VOCCOCO"
         exit 1
         ;;
 esac

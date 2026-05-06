@@ -1,0 +1,421 @@
+{
+  "experiment_tag": "v2",
+  "config": "configs/test/idd_prompt_eval.yaml",
+  "checkpoint": "work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_train_task2_10shot_seed1_wapr_kume/best_owod_Both_epoch_40.pth",
+  "num_images_processed": 21084,
+  "iou_threshold": 0.5,
+  "split": "test",
+  "test_classes": [
+    {
+      "name": "car",
+      "gt_alias": [
+        "car"
+      ],
+      "prompts": [
+        "car"
+      ]
+    },
+    {
+      "name": "motorcycle",
+      "gt_alias": [
+        "motorcycle"
+      ],
+      "prompts": [
+        "motorcycle",
+        "motorbike",
+        "two wheeler"
+      ]
+    },
+    {
+      "name": "rider",
+      "gt_alias": [
+        "rider"
+      ],
+      "prompts": [
+        "rider",
+        "motorcyclist",
+        "driver"
+      ]
+    },
+    {
+      "name": "person",
+      "gt_alias": [
+        "person"
+      ],
+      "prompts": [
+        "person",
+        "pedestrian",
+        "human"
+      ]
+    },
+    {
+      "name": "autorickshaw",
+      "gt_alias": [
+        "autorickshaw"
+      ],
+      "prompts": [
+        "auto rickshaw",
+        "tuk tuk",
+        "three wheeler"
+      ]
+    },
+    {
+      "name": "bicycle",
+      "gt_alias": [
+        "bicycle"
+      ],
+      "prompts": [
+        "bicycle",
+        "pedal bicycle"
+      ]
+    },
+    {
+      "name": "traffic_sign",
+      "gt_alias": [
+        "traffic sign"
+      ],
+      "prompts": [
+        "traffic sign",
+        "sign board",
+        "road traffic sign"
+      ]
+    },
+    {
+      "name": "traffic_light",
+      "gt_alias": [
+        "traffic light"
+      ],
+      "prompts": [
+        "traffic light",
+        "traffic signal light",
+        "road signal lamp"
+      ]
+    },
+    {
+      "name": "bus",
+      "gt_alias": [
+        "bus"
+      ],
+      "prompts": [
+        "bus",
+        "passenger bus",
+        "city bus"
+      ]
+    },
+    {
+      "name": "truck",
+      "gt_alias": [
+        "truck"
+      ],
+      "prompts": [
+        "truck",
+        "lorry",
+        "cargo truck"
+      ]
+    },
+    {
+      "name": "tanker",
+      "gt_alias": [
+        "tanker_vehicle"
+      ],
+      "prompts": [
+        "tanker truck",
+        "fuel tanker",
+        "water tanker"
+      ]
+    },
+    {
+      "name": "crane_truck",
+      "gt_alias": [
+        "crane_truck"
+      ],
+      "prompts": [
+        "crane truck",
+        "mobile crane",
+        "lifting crane"
+      ]
+    },
+    {
+      "name": "street_cart",
+      "gt_alias": [
+        "street_cart"
+      ],
+      "prompts": [
+        "street vendor cart",
+        "food cart",
+        "hand cart"
+      ]
+    },
+    {
+      "name": "excavator",
+      "gt_alias": [
+        "excavator"
+      ],
+      "prompts": [
+        "excavator",
+        "digging machine",
+        "yellow excavator",
+        "construction excavator"
+      ]
+    }
+  ],
+  "gt_classes_seen": [
+    "animal",
+    "autorickshaw",
+    "bicycle",
+    "bus",
+    "car",
+    "concrete_mixer",
+    "crane_truck",
+    "excavator",
+    "motorcycle",
+    "person",
+    "pole",
+    "pull_cart",
+    "rider",
+    "road_roller",
+    "street_cart",
+    "tanker_vehicle",
+    "tractor",
+    "traffic light",
+    "traffic sign",
+    "truck"
+  ],
+  "counts_per_gt": {
+    "animal": 4753,
+    "autorickshaw": 165451,
+    "bicycle": 7950,
+    "bus": 133670,
+    "car": 470195,
+    "concrete_mixer": 2926,
+    "crane_truck": 3569,
+    "excavator": 4254,
+    "motorcycle": 391209,
+    "person": 132819,
+    "pole": 9610,
+    "pull_cart": 1740,
+    "rider": 225778,
+    "road_roller": 1142,
+    "street_cart": 23512,
+    "tanker_vehicle": 9256,
+    "tractor": 13034,
+    "traffic light": 5677,
+    "traffic sign": 47539,
+    "truck": 175583
+  },
+  "cross_class_winner_rate": {
+    "animal": null,
+    "autorickshaw": 0.13462596176511474,
+    "bicycle": 0.5392452830188679,
+    "bus": 0.5839979052891449,
+    "car": 0.38034219844957945,
+    "concrete_mixer": null,
+    "crane_truck": 0.5738302045390866,
+    "excavator": 0.0923836389280677,
+    "motorcycle": 0.783627166041681,
+    "person": 0.593296139859508,
+    "pole": null,
+    "pull_cart": null,
+    "rider": 0.3263294032190913,
+    "road_roller": null,
+    "street_cart": 0.6906260632868323,
+    "tanker_vehicle": 0.24859550561797752,
+    "tractor": null,
+    "traffic light": 0.8768715871058658,
+    "traffic sign": 0.7667178527104062,
+    "truck": 0.7032799302893789
+  },
+  "cross_class_mean_margin": {
+    "animal": null,
+    "autorickshaw": -0.01224262174218893,
+    "bicycle": 0.025456372648477554,
+    "bus": 0.04654235020279884,
+    "car": 0.029856527224183083,
+    "concrete_mixer": null,
+    "crane_truck": -0.011598403565585613,
+    "excavator": 0.0021841947454959154,
+    "motorcycle": 0.09328582137823105,
+    "person": 0.10931428521871567,
+    "pole": null,
+    "pull_cart": null,
+    "rider": -0.04120543226599693,
+    "road_roller": null,
+    "street_cart": 0.03864792734384537,
+    "tanker_vehicle": -0.021277079358696938,
+    "tractor": null,
+    "traffic light": 0.10617700219154358,
+    "traffic sign": 0.038014303892850876,
+    "truck": 0.03516262769699097
+  },
+  "within_class": {
+    "motorcycle": {
+      "N": 391209,
+      "winner_rate": {
+        "motorcycle": 0.3503370321234941,
+        "motorbike": 0.10385752884008292,
+        "two wheeler": 0.545805439036423
+      },
+      "mean_score": {
+        "motorcycle": 0.05344562605023384,
+        "motorbike": 0.049111030995845795,
+        "two wheeler": 0.011020004749298096
+      }
+    },
+    "rider": {
+      "N": 225778,
+      "winner_rate": {
+        "rider": 0.1679525905978439,
+        "motorcyclist": 0.42536916794373236,
+        "driver": 0.40667824145842374
+      },
+      "mean_score": {
+        "rider": 0.018264709040522575,
+        "motorcyclist": 0.03293792903423309,
+        "driver": 0.018408702686429024
+      }
+    },
+    "person": {
+      "N": 132819,
+      "winner_rate": {
+        "person": 0.7969115864447105,
+        "pedestrian": 0.17756495682093676,
+        "human": 0.025523456734352766
+      },
+      "mean_score": {
+        "person": 0.08751733601093292,
+        "pedestrian": 0.012041816487908363,
+        "human": 0.0225902758538723
+      }
+    },
+    "autorickshaw": {
+      "N": 165451,
+      "winner_rate": {
+        "auto rickshaw": 0.28816386724770476,
+        "tuk tuk": 0.014463496745259926,
+        "three wheeler": 0.6973726360070354
+      },
+      "mean_score": {
+        "auto rickshaw": 0.018518861383199692,
+        "tuk tuk": 0.007173289079219103,
+        "three wheeler": 0.016658395528793335
+      }
+    },
+    "bicycle": {
+      "N": 7950,
+      "winner_rate": {
+        "bicycle": 0.4675471698113208,
+        "pedal bicycle": 0.5324528301886793
+      },
+      "mean_score": {
+        "bicycle": 0.03930969908833504,
+        "pedal bicycle": 0.016005324199795723
+      }
+    },
+    "traffic_sign": {
+      "N": 47539,
+      "winner_rate": {
+        "traffic sign": 0.3681188077157702,
+        "sign board": 0.225583205368224,
+        "road traffic sign": 0.4062979869160058
+      },
+      "mean_score": {
+        "traffic sign": 0.022329963743686676,
+        "sign board": 0.013674722984433174,
+        "road traffic sign": 0.009063098579645157
+      }
+    },
+    "traffic_light": {
+      "N": 5677,
+      "winner_rate": {
+        "traffic light": 0.639598379425753,
+        "traffic signal light": 0.07380658798661265,
+        "road signal lamp": 0.2865950325876343
+      },
+      "mean_score": {
+        "traffic light": 0.0648651123046875,
+        "traffic signal light": 0.04136357456445694,
+        "road signal lamp": 0.013404075987637043
+      }
+    },
+    "bus": {
+      "N": 133670,
+      "winner_rate": {
+        "bus": 0.08838931697463903,
+        "passenger bus": 0.8312635595122316,
+        "city bus": 0.08034712351312935
+      },
+      "mean_score": {
+        "bus": 0.024777844548225403,
+        "passenger bus": 0.01870582439005375,
+        "city bus": 0.019812332466244698
+      }
+    },
+    "truck": {
+      "N": 175583,
+      "winner_rate": {
+        "truck": 0.1327406411782462,
+        "lorry": 0.011698171235256261,
+        "cargo truck": 0.8555611875864976
+      },
+      "mean_score": {
+        "truck": 0.028638944029808044,
+        "lorry": 0.02035885863006115,
+        "cargo truck": 0.020800204947590828
+      }
+    },
+    "tanker": {
+      "N": 9256,
+      "winner_rate": {
+        "tanker truck": 0.6825842696629213,
+        "fuel tanker": 0.010371650821089023,
+        "water tanker": 0.3070440795159896
+      },
+      "mean_score": {
+        "tanker truck": 0.015332636423408985,
+        "fuel tanker": 0.007690140977501869,
+        "water tanker": 0.012012154795229435
+      }
+    },
+    "crane_truck": {
+      "N": 3569,
+      "winner_rate": {
+        "crane truck": 0.5348837209302325,
+        "mobile crane": 0.14289717007565145,
+        "lifting crane": 0.322219108994116
+      },
+      "mean_score": {
+        "crane truck": 0.011897088028490543,
+        "mobile crane": 0.010800437070429325,
+        "lifting crane": 0.007465043105185032
+      }
+    },
+    "street_cart": {
+      "N": 23512,
+      "winner_rate": {
+        "street vendor cart": 0.5768969037087445,
+        "food cart": 0.06320176930928888,
+        "hand cart": 0.35990132698196664
+      },
+      "mean_score": {
+        "street vendor cart": 0.0219778660684824,
+        "food cart": 0.01890103705227375,
+        "hand cart": 0.02334311231970787
+      }
+    },
+    "excavator": {
+      "N": 4254,
+      "winner_rate": {
+        "excavator": 0.028678890456041373,
+        "digging machine": 0.6716031969910672,
+        "yellow excavator": 0.05148095909732017,
+        "construction excavator": 0.24823695345557123
+      },
+      "mean_score": {
+        "excavator": 0.010423720814287663,
+        "digging machine": 0.009937440976500511,
+        "yellow excavator": 0.007484321482479572,
+        "construction excavator": 0.010533020831644535
+      }
+    }
+  }
+}

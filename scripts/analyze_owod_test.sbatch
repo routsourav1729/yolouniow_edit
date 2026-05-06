@@ -18,12 +18,14 @@
 #   sbatch scripts/analyze_owod_test.sbatch --dataset IDD --task 2
 #   sbatch scripts/analyze_owod_test.sbatch --dataset IDD --task 2 --method wapr
 #   sbatch scripts/analyze_owod_test.sbatch --dataset IDD --task 2 --method wapr-kume
-#   sbatch scripts/analyze_owod_test.sbatch --dataset FOOD_VOCCOCO --task 2 --method wapr
+#   sbatch scripts/analyze_owod_test.sbatch --dataset nuOWODB --task 2
+#   sbatch scripts/analyze_owod_test.sbatch --dataset nuOWODB --task 2 --method all
 #
 # Options:
-#   --dataset         IDD | FOOD_VOCCOCO | FOOD_VOC
+#   --dataset         IDD | FOOD_VOCCOCO | FOOD_VOC | nuOWODB
 #   --task            1 | 2
-#   --method          baseline | wapr | kume | wapr-kume  (default: wapr-kume)
+#   --method          baseline | wapr | kume | wapr-kume | all  (default: baseline)
+#                     'all' = run every available checkpoint in one job (data loads once)
 #   --checkpoint      Override checkpoint path
 #   --config          Override config file path
 #   --shot            Few-shot K (default: 10)
@@ -53,7 +55,7 @@ mkdir -p slurm_logs/{idd,voccoco,voc,analysis}
 # ─── Parse arguments ──────────────────────────────────────────────────────
 DATASET="IDD"
 TASK=2
-METHOD="wapr-kume"
+METHOD="baseline"
 CKPT=""
 CONFIG=""
 FEWSHOT_K=10
@@ -61,7 +63,7 @@ FEWSHOT_SEED=1
 OUT_DIR_OVERRIDE=""
 NUM_IMAGES=0
 CONF_THR=0.05
-BATCH_SIZE=32
+BATCH_SIZE=64
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -87,8 +89,9 @@ case "$METHOD" in
     wapr-kume)   METHOD_SUFFIX="_wapr_kume" ;;
     kume)        METHOD_SUFFIX="_kume" ;;
     wapr)        METHOD_SUFFIX="_wapr" ;;
-    baseline|"")  METHOD_SUFFIX="" ;;
-    *)           echo "ERROR: Unknown --method '$METHOD'. Use: baseline wapr kume wapr-kume"; exit 1 ;;
+    baseline|"") METHOD_SUFFIX="" ;;
+    all)         METHOD_SUFFIX="" ;;   # resolved per-entry in all mode
+    *)           echo "ERROR: Unknown --method '$METHOD'. Use: baseline wapr kume wapr-kume all"; exit 1 ;;
 esac
 
 # ─── Auto-detect config and checkpoint ────────────────────────────────────
@@ -140,44 +143,42 @@ case $DATASET in
             fi
         fi
         ;;
+    nuOWODB)
+        LOG_DIR=slurm_logs/nuscenes
+        FEWSHOT_DIR=data/OWOD/nuowodb_fewshot_tfa
+        T1_CKPT_DIR=work_dirs/${STEM}_nuowodb_train_task1
+        if [ -z "$CONFIG" ]; then
+            if [ "$TASK" -eq 1 ]; then
+                # T1 uses base OWOD config with DATASET=nuOWODB TASK=1 env vars
+                CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod.py
+            else
+                # T2 fewshot baseline config
+                CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_nuowodb_t2.py
+            fi
+        fi
+        ;;
     *)
-        echo "ERROR: Unknown dataset '$DATASET'. Use IDD | FOOD_VOCCOCO | FOOD_VOC"
+        echo "ERROR: Unknown dataset '$DATASET'. Use IDD | FOOD_VOCCOCO | FOOD_VOC | nuOWODB"
         exit 1
         ;;
 esac
 
-# T2 work dir
-if [ "$TASK" -eq 1 ]; then
-    T2_WORK_DIR="$T1_CKPT_DIR"
-else
-    T2_WORK_DIR=work_dirs/${STEM}_${DATASET_LOWER}_train_task2_${FEWSHOT_K}shot_seed${FEWSHOT_SEED}${METHOD_SUFFIX}
-fi
-
-# Auto-detect checkpoint
-if [ -z "$CKPT" ]; then
-    CKPT=$(ls -t "${T2_WORK_DIR}"/best*.pth 2>/dev/null | head -1)
-    if [ -z "$CKPT" ]; then
-        CKPT=$(ls -t "${T2_WORK_DIR}"/epoch_*.pth 2>/dev/null | head -1)
+# ─── Helper: resolve best checkpoint from a work dir ──────────────────────
+resolve_ckpt() {
+    local wdir="$1"
+    local ckpt
+    ckpt=$(ls -t "${wdir}"/best*.pth 2>/dev/null | head -1)
+    if [ -z "$ckpt" ]; then
+        ckpt=$(ls -t "${wdir}"/epoch_*.pth 2>/dev/null | head -1)
     fi
-fi
+    echo "$ckpt"
+}
 
-if [ -z "$CKPT" ] || [ ! -f "$CKPT" ]; then
-    echo "ERROR: No checkpoint found in ${T2_WORK_DIR}"
-    echo "  Use --checkpoint /path/to/ckpt.pth to specify manually."
-    exit 1
-fi
+# ─── T1 work dir (always the same regardless of method) ──────────────────
+T1_WORK_DIR="$T1_CKPT_DIR"
 
-# Output dir
-if [ -n "$OUT_DIR_OVERRIDE" ]; then
-    OUT_DIR="$OUT_DIR_OVERRIDE"
-else
-    OUT_DIR="${T2_WORK_DIR}/test_analysis"
-fi
-mkdir -p "$OUT_DIR"
-
-# Symlink logs to dataset-specific dir
-ln -sf "$(pwd)/slurm_logs/analysis/test_${SLURM_JOB_ID}.out" "${LOG_DIR}/test_${SLURM_JOB_ID}.out" 2>/dev/null
-ln -sf "$(pwd)/slurm_logs/analysis/test_${SLURM_JOB_ID}.err" "${LOG_DIR}/test_${SLURM_JOB_ID}.err" 2>/dev/null
+# ─── Resolve config for T1 (used as reference pipeline regardless of method) ─
+# (CONFIG is already set above in the dataset case block)
 
 # Set env vars for the config
 export THRESHOLD=0.05
@@ -187,39 +188,154 @@ export FEWSHOT_SEED=${FEWSHOT_SEED}
 export FEWSHOT_DIR
 export VISUALIZE=${VISUALIZE:-0}
 
-echo "=========================================="
-echo "OWOD TEST-SET ANALYSIS"
-echo "=========================================="
-echo "  Dataset:    $DATASET"
-echo "  Task:       T${TASK}"
-echo "  Method:     $METHOD"
-echo "  Config:     $CONFIG"
-echo "  Checkpoint: $CKPT ($(du -sh "$CKPT" 2>/dev/null | cut -f1))"
-echo "  Out dir:    $OUT_DIR"
-echo "  Num images: ${NUM_IMAGES:-all}"
-echo "  Conf thr:   $CONF_THR"
-echo "  Batch size: $BATCH_SIZE"
-echo "  Log dir:    $LOG_DIR"
-echo "=========================================="
+mkdir -p slurm_logs/nuscenes
+
+# Symlink logs to dataset-specific dir
+ln -sf "$(pwd)/slurm_logs/analysis/test_${SLURM_JOB_ID}.out" "${LOG_DIR}/test_${SLURM_JOB_ID}.out" 2>/dev/null
+ln -sf "$(pwd)/slurm_logs/analysis/test_${SLURM_JOB_ID}.err" "${LOG_DIR}/test_${SLURM_JOB_ID}.err" 2>/dev/null
 
 NUM_IMAGES_FLAG=""
 if [ "$NUM_IMAGES" -gt 0 ] 2>/dev/null; then
     NUM_IMAGES_FLAG="--num-images $NUM_IMAGES"
 fi
 
-python tools/analyze_owod_test.py \
-    --config "$CONFIG" \
-    --checkpoint "$CKPT" \
-    --out-dir "$OUT_DIR" \
-    --conf-thr "$CONF_THR" \
-    --batch-size "$BATCH_SIZE" \
-    $NUM_IMAGES_FLAG
+# ─── --method all: collect every available checkpoint, run in one pass ───
+if [ "$METHOD" = "all" ]; then
+    if [ "$TASK" -eq 1 ]; then
+        echo "ERROR: --method all only makes sense for --task 2 (T1 has only one checkpoint)"
+        exit 1
+    fi
+
+    # Collect all method variants for this dataset
+    # Each entry: label|config|work_dir_suffix
+    declare -a METHOD_DEFS
+    case $DATASET in
+        IDD)
+            METHOD_DEFS=(
+                "baseline|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2.py|"
+                "wapr|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_wapr.py|_wapr"
+                "kume|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2_kume.py|_kume"
+                "wapr-kume|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2_kume.py|_wapr_kume"
+            )
+            ;;
+        FOOD_VOCCOCO)
+            METHOD_DEFS=(
+                "baseline|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_80e_8gpus_owod_food_voccoco_t2.py|"
+                "wapr|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_80e_8gpus_owod_food_voccoco_t2_wapr.py|_wapr"
+                "wapr-kume|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_80e_8gpus_owod_food_voccoco_t2_wapr.py|_wapr_kume"
+            )
+            ;;
+        FOOD_VOC)
+            METHOD_DEFS=(
+                "baseline|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_80e_8gpus_owod_food_voc_t2.py|"
+                "wapr|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_5e_8gpus_owod_food_voc_t2_wapr.py|_wapr"
+                "wapr-kume|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_5e_8gpus_owod_food_voc_t2_wapr.py|_wapr_kume"
+            )
+            ;;
+        nuOWODB)
+            METHOD_DEFS=(
+                "baseline|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_nuowodb_t2.py|"
+            )
+            ;;
+    esac
+
+    # Build runs JSON
+    RUNS_JSON_PATH="/tmp/owod_analysis_runs_${SLURM_JOB_ID:-$$}.json"
+    echo "[" > "$RUNS_JSON_PATH"
+    first=1
+    for entry in "${METHOD_DEFS[@]}"; do
+        label=$(echo "$entry" | cut -d'|' -f1)
+        cfg=$(echo "$entry" | cut -d'|' -f2)
+        suffix=$(echo "$entry" | cut -d'|' -f3)
+        wdir=work_dirs/${STEM}_${DATASET_LOWER}_train_task2_${FEWSHOT_K}shot_seed${FEWSHOT_SEED}${suffix}
+        ckpt=$(resolve_ckpt "$wdir")
+        if [ -z "$ckpt" ] || [ ! -f "$ckpt" ]; then
+            echo "  [skip] $label — no checkpoint in $wdir"
+            continue
+        fi
+        out="${wdir}/test_analysis"
+        mkdir -p "$out"
+        [ "$first" -eq 0 ] && echo "," >> "$RUNS_JSON_PATH"
+        printf '  {"label":"%s","config":"%s","checkpoint":"%s","out_dir":"%s"}' \
+            "$label" "$cfg" "$ckpt" "$out" >> "$RUNS_JSON_PATH"
+        first=0
+        echo "  [queued] $label  ckpt=$(basename $ckpt)  out=$out"
+    done
+    echo "" >> "$RUNS_JSON_PATH"
+    echo "]" >> "$RUNS_JSON_PATH"
+
+    echo "=========================================="
+    echo "OWOD TEST-SET ANALYSIS  (--method all)"
+    echo "  Dataset:    $DATASET  T${TASK}"
+    echo "  Runs JSON:  $RUNS_JSON_PATH"
+    echo "  Num images: ${NUM_IMAGES:-all}"
+    echo "  Conf thr:   $CONF_THR  Batch: $BATCH_SIZE"
+    echo "  Log dir:    $LOG_DIR"
+    echo "=========================================="
+    cat "$RUNS_JSON_PATH"
+    echo ""
+
+    python tools/analyze_owod_test.py \
+        --runs-json "$RUNS_JSON_PATH" \
+        --conf-thr "$CONF_THR" \
+        --batch-size "$BATCH_SIZE" \
+        $NUM_IMAGES_FLAG
+
+    rm -f "$RUNS_JSON_PATH"
+
+else
+    # ─── Single-method mode ────────────────────────────────────────────────
+    if [ "$TASK" -eq 1 ]; then
+        T2_WORK_DIR="$T1_WORK_DIR"
+    else
+        T2_WORK_DIR=work_dirs/${STEM}_${DATASET_LOWER}_train_task2_${FEWSHOT_K}shot_seed${FEWSHOT_SEED}${METHOD_SUFFIX}
+    fi
+
+    if [ -z "$CKPT" ]; then
+        CKPT=$(resolve_ckpt "$T2_WORK_DIR")
+    fi
+
+    if [ -z "$CKPT" ] || [ ! -f "$CKPT" ]; then
+        echo "ERROR: No checkpoint found in ${T2_WORK_DIR}"
+        echo "  Use --checkpoint /path/to/ckpt.pth to specify manually."
+        exit 1
+    fi
+
+    if [ -n "$OUT_DIR_OVERRIDE" ]; then
+        OUT_DIR="$OUT_DIR_OVERRIDE"
+    else
+        OUT_DIR="${T2_WORK_DIR}/test_analysis"
+    fi
+    mkdir -p "$OUT_DIR"
+
+    echo "=========================================="
+    echo "OWOD TEST-SET ANALYSIS"
+    echo "  Dataset:    $DATASET"
+    echo "  Task:       T${TASK}"
+    echo "  Method:     $METHOD"
+    echo "  Config:     $CONFIG"
+    echo "  Checkpoint: $CKPT ($(du -sh "$CKPT" 2>/dev/null | cut -f1))"
+    echo "  Out dir:    $OUT_DIR"
+    echo "  Num images: ${NUM_IMAGES:-all}"
+    echo "  Conf thr:   $CONF_THR"
+    echo "  Batch size: $BATCH_SIZE"
+    echo "  Log dir:    $LOG_DIR"
+    echo "=========================================="
+
+    python tools/analyze_owod_test.py \
+        --config "$CONFIG" \
+        --checkpoint "$CKPT" \
+        --out-dir "$OUT_DIR" \
+        --conf-thr "$CONF_THR" \
+        --batch-size "$BATCH_SIZE" \
+        $NUM_IMAGES_FLAG
+fi
 
 echo ""
-echo "Test analysis complete. Results in: $OUT_DIR"
-echo "  confusion_matrix.csv   — GT × predicted confusion matrix"
-echo "  false_positives.csv    — unmatched predictions by class"
-echo "  test_analysis.json     — full metrics + confusion data"
-
+echo "Test analysis complete."
+echo "  confusion_matrix.csv          — GT × predicted confusion matrix"
+echo "  false_positives.csv           — unmatched predictions by class"
+echo "  test_analysis.json            — full metrics + confusion data + unknown Tobj/stride"
+echo "  unknown_tobj_by_stride.csv    — Tobj/Tunk mean,std,percentiles per unknown class × stride"
 echo ""
 echo "ANALYSIS FINISHED at $(date)"

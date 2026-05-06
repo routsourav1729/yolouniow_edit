@@ -1,0 +1,122 @@
+# Text-Visual Alignment Probe — nuOWODB (nuImages-based OWOD)
+#
+# 23 classes across T1 (base) + T2 (novel) + T3 (novel2).
+# gt_alias MUST match the dotted nuScenes annotation names exactly.
+# 3 prompts per class: plain label → synonym → descriptive noun phrase.
+
+experiment_tag: v1
+
+# ── Model + checkpoints ──────────────────────────────────────────────────────
+model_config: configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_nuowodb_t2.py
+checkpoint:   work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_nuowodb_train_task2_10shot_seed1/best_owod_Both_epoch_10.pth
+
+text_encoder_pretrain_ckpt: pretrained/yolo_uniow_l_lora_bn_5e-4_100e_8gpus_obj365v1_goldg_train_lvis_minival.pth
+text_encoder_model_name:    openai/clip-vit-base-patch32
+text_encoder_use_lora:      true
+
+# ── Data ─────────────────────────────────────────────────────────────────────
+split:         test
+num_images:    0
+iou_threshold: 0.5
+
+# ── Inference perf ───────────────────────────────────────────────────────────
+batch_size:    16
+num_workers:   12
+amp:           true
+
+# ── Test classes ─────────────────────────────────────────────────────────────
+# T1 — base (10 vehicle classes)
+test_classes:
+  - name: bicycle
+    prompts: "bicycle, bike, pedal bicycle"
+    gt_alias: ["vehicle.bicycle"]
+
+  - name: motorcycle
+    prompts: "motorcycle, motorbike, two wheeler"
+    gt_alias: ["vehicle.motorcycle"]
+
+  - name: car
+    prompts: "car, sedan, passenger car"
+    gt_alias: ["vehicle.car"]
+
+  - name: bus_bendy
+    prompts: "articulated bus, bendy bus, accordion bus"
+    gt_alias: ["vehicle.bus.bendy"]
+
+  - name: bus_rigid
+    prompts: "bus, city bus, passenger bus"
+    gt_alias: ["vehicle.bus.rigid"]
+
+  - name: truck
+    prompts: "truck, lorry, cargo truck"
+    gt_alias: ["vehicle.truck"]
+
+  - name: ambulance
+    prompts: "ambulance, emergency ambulance, medical van"
+    gt_alias: ["vehicle.emergency.ambulance"]
+
+  - name: police_car
+    prompts: "police car, patrol car, police vehicle"
+    gt_alias: ["vehicle.emergency.police"]
+
+  - name: construction_vehicle
+    prompts: "construction vehicle, bulldozer, excavator"
+    gt_alias: ["vehicle.construction"]
+
+  - name: trailer
+    prompts: "trailer, semi trailer, cargo trailer"
+    gt_alias: ["vehicle.trailer"]
+
+  # T2 — novel (7 pedestrian classes)
+  - name: adult_pedestrian
+    prompts: "adult pedestrian, walking person, adult"
+    gt_alias: ["human.pedestrian.adult"]
+
+  - name: child_pedestrian
+    prompts: "child, kid walking, young pedestrian"
+    gt_alias: ["human.pedestrian.child"]
+
+  - name: wheelchair_user
+    prompts: "wheelchair user, person in wheelchair, wheelchair"
+    gt_alias: ["human.pedestrian.wheelchair"]
+
+  - name: stroller
+    prompts: "baby stroller, pushchair, pram"
+    gt_alias: ["human.pedestrian.stroller"]
+
+  - name: personal_mobility
+    prompts: "electric scooter, personal mobility device, hoverboard"
+    gt_alias: ["human.pedestrian.personal_mobility"]
+
+  - name: police_officer
+    prompts: "police officer, uniformed officer, law enforcement officer"
+    gt_alias: ["human.pedestrian.police_officer"]
+
+  - name: construction_worker
+    prompts: "construction worker, hard hat worker, site worker"
+    gt_alias: ["human.pedestrian.construction_worker"]
+
+  # T3 — novel2 (6 object classes)
+  - name: barrier
+    prompts: "road barrier, concrete barrier, traffic barrier"
+    gt_alias: ["movable_object.barrier"]
+
+  - name: traffic_cone
+    prompts: "traffic cone, orange cone, road cone"
+    gt_alias: ["movable_object.trafficcone"]
+
+  - name: pushable_object
+    prompts: "pushable object, wheeled cart, trolley"
+    gt_alias: ["movable_object.pushable_pullable"]
+
+  - name: debris
+    prompts: "road debris, fallen object, rubble on road"
+    gt_alias: ["movable_object.debris"]
+
+  - name: bicycle_rack
+    prompts: "bicycle rack, bike stand, cycle parking rack"
+    gt_alias: ["static_object.bicycle_rack"]
+
+  - name: animal
+    prompts: "animal, dog, cat"
+    gt_alias: ["animal"]

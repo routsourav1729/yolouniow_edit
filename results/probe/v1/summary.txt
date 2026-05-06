@@ -1,0 +1,244 @@
+=== probe v=v1  N_imgs=14747  N_classes=23  N_unique_prompts=69 ===
+
+Cross-class winner rate (correct class = highest summed sigmoid):
+  animal                    N=    134 winner=0.246  margin=-0.013
+  human.pedestrian.adult    N=  70123 winner=0.401  margin=+0.014
+  human.pedestrian.child    N=    549 winner=0.388  margin=+0.019
+  human.pedestrian.construction_worker N=   8001 winner=0.303  margin=+0.017
+  human.pedestrian.personal_mobility N=    931 winner=0.040  margin=-0.032
+  human.pedestrian.police_officer N=    406 winner=0.121  margin=-0.044
+  human.pedestrian.stroller N=    264 winner=0.489  margin=+0.060
+  human.pedestrian.wheelchair N=     15 winner=0.467  margin=+0.009
+  movable_object.barrier    N=  73297 winner=0.494  margin=+0.003
+  movable_object.debris     N=   3075 winner=0.052  margin=-0.017
+  movable_object.pushable_pullable N=   3317 winner=0.198  margin=-0.002
+  movable_object.trafficcone N=  44944 winner=0.787  margin=+0.051
+  static_object.bicycle_rack N=   5932 winner=0.428  margin=-0.014
+  vehicle.bicycle           N=  21977 winner=0.258  margin=+0.056
+  vehicle.bus.bendy         N=    450 winner=0.073  margin=-0.014
+  vehicle.bus.rigid         N=  17381 winner=0.306  margin=+0.006
+  vehicle.car               N= 275770 winner=0.318  margin=+0.007
+  vehicle.construction      N=  10708 winner=0.104  margin=-0.002
+  vehicle.ego               N=      1 winner=  n/a  margin=  n/a
+  vehicle.emergency.ambulance N=     58 winner=0.552  margin=+0.017
+  vehicle.emergency.police  N=    712 winner=0.306  margin=-0.002
+  vehicle.motorcycle        N=  26271 winner=0.296  margin=+0.020
+  vehicle.trailer           N=   6390 winner=0.480  margin=-0.004
+  vehicle.truck             N=  64305 winner=0.266  margin=-0.000
+
+Within-class winner rate (which sub-prompt wins per anchor):
+  bicycle                   N=  21977
+      bicycle                        winner=0.383  mean=0.0421
+      bike                           winner=0.191  mean=0.0368
+      pedal bicycle                  winner=0.426  mean=0.0200
+  motorcycle                N=  26271
+      motorcycle                     winner=0.216  mean=0.0310
+      motorbike                      winner=0.197  mean=0.0304
+      two wheeler                    winner=0.587  mean=0.0137
+  car                       N= 275770
+      car                            winner=0.586  mean=0.0233
+      sedan                          winner=0.050  mean=0.0170
+      passenger car                  winner=0.364  mean=0.0064
+  bus_bendy                 N=    450
+      articulated bus                winner=0.376  mean=0.0175
+      bendy bus                      winner=0.433  mean=0.0216
+      accordion bus                  winner=0.191  mean=0.0083
+  bus_rigid                 N=  17381
+      bus                            winner=0.096  mean=0.0255
+      city bus                       winner=0.169  mean=0.0214
+      passenger bus                  winner=0.735  mean=0.0200
+  truck                     N=  64305
+      truck                          winner=0.146  mean=0.0231
+      lorry                          winner=0.014  mean=0.0157
+      cargo truck                    winner=0.840  mean=0.0144
+  ambulance                 N=     58
+      ambulance                      winner=0.086  mean=0.0116
+      emergency ambulance            winner=0.310  mean=0.0192
+      medical van                    winner=0.603  mean=0.0260
+  police_car                N=    712
+      police car                     winner=0.243  mean=0.0136
+      patrol car                     winner=0.583  mean=0.0115
+      police vehicle                 winner=0.174  mean=0.0086
+  construction_vehicle      N=  10708
+      construction vehicle           winner=0.495  mean=0.0120
+      bulldozer                      winner=0.201  mean=0.0058
+      excavator                      winner=0.304  mean=0.0101
+  trailer                   N=   6390
+      trailer                        winner=0.518  mean=0.0099
+      semi trailer                   winner=0.394  mean=0.0113
+      cargo trailer                  winner=0.088  mean=0.0088
+  adult_pedestrian          N=  70123
+      adult pedestrian               winner=0.325  mean=0.0251
+      walking person                 winner=0.377  mean=0.0288
+      adult                          winner=0.298  mean=0.0032
+  child_pedestrian          N=    549
+      child                          winner=0.211  mean=0.0169
+      kid walking                    winner=0.244  mean=0.0165
+      young pedestrian               winner=0.545  mean=0.0288
+  wheelchair_user           N=     15
+      wheelchair user                winner=0.400  mean=0.0206
+      person in wheelchair           winner=0.467  mean=0.0234
+      wheelchair                     winner=0.133  mean=0.0020
+  stroller                  N=    264
+      baby stroller                  winner=0.212  mean=0.0566
+      pushchair                      winner=0.644  mean=0.0725
+      pram                           winner=0.144  mean=0.0439
+  personal_mobility         N=    931
+      electric scooter               winner=0.273  mean=0.0057
+      personal mobility device       winner=0.646  mean=0.0059
+      hoverboard                     winner=0.082  mean=0.0007
+  police_officer            N=    406
+      police officer                 winner=0.431  mean=0.0164
+      uniformed officer              winner=0.288  mean=0.0155
+      law enforcement officer        winner=0.281  mean=0.0169
+  construction_worker       N=   8001
+      construction worker            winner=0.151  mean=0.0226
+      hard hat worker                winner=0.452  mean=0.0173
+      site worker                    winner=0.397  mean=0.0229
+  barrier                   N=  73297
+      road barrier                   winner=0.311  mean=0.0027
+      concrete barrier               winner=0.300  mean=0.0042
+      traffic barrier                winner=0.390  mean=0.0022
+  traffic_cone              N=  44944
+      traffic cone                   winner=0.343  mean=0.0256
+      orange cone                    winner=0.082  mean=0.0149
+      road cone                      winner=0.576  mean=0.0157
+  pushable_object           N=   3317
+      pushable object                winner=0.370  mean=0.0042
+      wheeled cart                   winner=0.272  mean=0.0096
+      trolley                        winner=0.358  mean=0.0083
+  debris                    N=   3075
+      road debris                    winner=0.457  mean=0.0003
+      fallen object                  winner=0.503  mean=0.0009
+      rubble on road                 winner=0.040  mean=0.0002
+  bicycle_rack              N=   5932
+      bicycle rack                   winner=0.446  mean=0.0063
+      bike stand                     winner=0.220  mean=0.0013
+      cycle parking rack             winner=0.334  mean=0.0077
+  animal                    N=    134
+      animal                         winner=0.119  mean=0.0135
+      dog                            winner=0.836  mean=0.0346
+      cat                            winner=0.045  mean=0.0051
+
+Per-prompt leakage diagnostic (sorted by net_useful = on_target_wins - off_target_wins):
+  prompt                              parent               spec  within   on_wins  off_wins  steal%       net
+  car                                 car                 29.16   0.586     64131      5371    7.7%     58760
+  passenger car                       car                  7.52   0.364     24724      3876   13.6%     20848
+  concrete barrier                    barrier             55.09   0.300     16012      1338    7.7%     14674
+  traffic cone                        traffic_cone       665.69   0.343     12724       797    5.9%     11927
+  road cone                           traffic_cone       444.43   0.576     17857      7227   28.8%     10630
+  adult pedestrian                    adult_pedestrian    65.11   0.325      8387      1037   11.0%      7350
+  walking person                      adult_pedestrian    49.49   0.377      8315      1032   11.0%      7283
+  sedan                               car                 41.66   0.050      5281       198    3.6%      5083
+  orange cone                         traffic_cone       521.12   0.082      2766       407   12.8%      2359
+  motorcycle                          motorcycle          77.37   0.216      2269       713   23.9%      1556
+  truck                               truck                9.34   0.146      2222       856   27.8%      1366
+  passenger bus                       bus_rigid           24.91   0.735      2875      1649   36.5%      1226
+  bicycle                             bicycle             97.42   0.383      3721      2987   44.5%       734
+  motorbike                           motorcycle          65.90   0.197       932       283   23.3%       649
+  city bus                            bus_rigid           27.38   0.169       867       258   22.9%       609
+  pedal bicycle                       bicycle             93.14   0.426       471       150   24.2%       321
+  bus                                 bus_rigid           24.03   0.096       353       197   35.8%       156
+  bike                                bicycle             38.70   0.191       921       786   46.0%       135
+  excavator                           construction_vehic  19.03   0.304       689       647   48.4%        42
+  lorry                               truck               10.49   0.014       106        84   44.2%        22
+  cat                                 animal             758.31   0.045         2        17   89.5%       -15
+  animal                              animal             431.93   0.119         4        31   88.6%       -27
+  bulldozer                           construction_vehic  15.85   0.201        22        93   80.9%       -71
+  road barrier                        barrier             12.47   0.311      8967      9039   50.2%       -72
+  dog                                 animal             986.60   0.836        27       143   84.1%      -116
+  baby stroller                       stroller           111.83   0.212        16       328   95.3%      -312
+  uniformed officer                   police_officer      22.67   0.288         5       350   98.6%      -345
+  child                               child_pedestrian    48.54   0.211        58       417   87.8%      -359
+  construction vehicle                construction_vehic   9.72   0.495       328       728   68.9%      -400
+  articulated bus                     bus_bendy           15.30   0.376        11       430   97.5%      -419
+  construction worker                 construction_worke  23.30   0.151       553      1137   67.3%      -584
+  wheeled cart                        pushable_object     12.97   0.272       190       881   82.3%      -691
+  adult                               adult_pedestrian    29.59   0.298      8969      9801   52.2%      -832
+  bendy bus                           bus_bendy           12.98   0.433        22      1325   98.4%     -1303
+  law enforcement officer             police_officer      20.98   0.281        11      1356   99.2%     -1345
+  cargo trailer                       trailer              6.92   0.088       162      1648   91.0%     -1486
+  accordion bus                       bus_bendy            4.10   0.191        10      1592   99.4%     -1582
+  traffic barrier                     barrier              6.49   0.390      8015      9810   55.0%     -1795
+  fallen object                       debris               6.65   0.503        80      1913   96.0%     -1833
+  trolley                             pushable_object     20.03   0.358       342      2264   86.9%     -1922
+  pram                                stroller           101.53   0.144        16      1941   99.2%     -1925
+  kid walking                         child_pedestrian    18.45   0.244        49      2106   97.7%     -2057
+  hoverboard                          personal_mobility   17.50   0.082        18      2235   99.2%     -2217
+  hard hat worker                     construction_worke  25.83   0.452       759      3353   81.5%     -2594
+  personal mobility device            personal_mobility    6.75   0.646         9      2767   99.7%     -2758
+  pushchair                           stroller            85.24   0.644        97      2993   96.9%     -2896
+  electric scooter                    personal_mobility    4.18   0.273        12      2929   99.6%     -2917
+  wheelchair user                     wheelchair_user     22.43   0.400         3      3227   99.9%     -3224
+  semi trailer                        trailer              6.71   0.394       787      4200   84.2%     -3413
+  rubble on road                      debris               4.28   0.040        16      3948   99.6%     -3932
+  cargo truck                         truck               12.88   0.840     19655     24063   55.0%     -4408
+  site worker                         construction_worke  18.02   0.397       801      5213   86.7%     -4412
+  police officer                      police_officer      19.12   0.431        14      4473   99.7%     -4459
+  road debris                         debris               4.35   0.457        84      6057   98.6%     -5973
+  pushable object                     pushable_object      8.07   0.370       154      6532   97.7%     -6378
+  cycle parking rack                  bicycle_rack        14.51   0.334       659      7380   91.8%     -6721
+  person in wheelchair                wheelchair_user     20.98   0.467         3      7578  100.0%     -7575
+  two wheeler                         motorcycle          22.06   0.587      3897     12949   76.9%     -9052
+  police vehicle                      police_car           1.85   0.174        13      9649   99.9%     -9636
+  wheelchair                          wheelchair_user      9.59   0.133         1     12788  100.0%    -12787
+  ambulance                           ambulance            7.92   0.086         5     13170  100.0%    -13165
+  young pedestrian                    child_pedestrian     9.94   0.545       113     15677   99.3%    -15564
+  bicycle rack                        bicycle_rack        13.13   0.446       971     17009   94.6%    -16038
+  police car                          police_car           2.15   0.243        21     20816   99.9%    -20795
+  trailer                             trailer              5.60   0.518      1469     25186   94.5%    -23717
+  bike stand                          bicycle_rack         3.09   0.220       499     25653   98.1%    -25154
+  emergency ambulance                 ambulance            4.35   0.310        14     25303   99.9%    -25289
+  patrol car                          police_car           2.10   0.583       136     29246   99.5%    -29110
+  medical van                         ambulance            5.33   0.603        10     29672  100.0%    -29662
+
+Top-3 stealers per GT class (which prompts steal anchors from this class):
+  vehicle.truck                  N=  64305  emergency ambulance(ambulance)=8046  trailer(trailer)=6194  medical van(ambulance)=4346
+  vehicle.car                    N= 275770  patrol car(police_car)=28145  medical van(ambulance)=23309  police car(police_car)=20433
+  vehicle.construction           N=  10708  cargo truck(truck)=3415  trailer(trailer)=1017  semi trailer(trailer)=619
+  vehicle.bicycle                N=  21977  bike stand(bicycle_rack)=6010  bicycle rack(bicycle_rack)=1950  cycle parking rack(bicycle_rack)=1769
+  vehicle.emergency.ambulance    N=     58  car(car)=17  cargo truck(truck)=4  passenger car(car)=4
+  human.pedestrian.adult         N=  70123  young pedestrian(child_pedestrian)=12577  person in wheelchair(wheelchair_user)=4962  bike stand(bicycle_rack)=4093
+  movable_object.trafficcone     N=  44944  traffic barrier(barrier)=3102  bike stand(bicycle_rack)=2959  pushable object(pushable_object)=2705
+  movable_object.barrier         N=  73297  trailer(trailer)=13682  cargo truck(truck)=4867  bicycle rack(bicycle_rack)=4173
+  vehicle.motorcycle             N=  26271  wheelchair(wheelchair_user)=2701  electric scooter(personal_mobility)=2060  bike stand(bicycle_rack)=1693
+  human.pedestrian.personal_mobility N=    931  bike stand(bicycle_rack)=297  bicycle rack(bicycle_rack)=107  bicycle(bicycle)=63
+  vehicle.bus.rigid              N=  17381  emergency ambulance(ambulance)=1994  trailer(trailer)=1860  medical van(ambulance)=1484
+  human.pedestrian.construction_worker N=   8001  adult(adult_pedestrian)=732  bike stand(bicycle_rack)=728  walking person(adult_pedestrian)=575
+  vehicle.trailer                N=   6390  cargo truck(truck)=1798  emergency ambulance(ambulance)=305  road barrier(barrier)=284
+  human.pedestrian.police_officer N=    406  walking person(adult_pedestrian)=78  bike stand(bicycle_rack)=55  young pedestrian(child_pedestrian)=33
+  movable_object.pushable_pullable N=   3317  bike stand(bicycle_rack)=509  bicycle rack(bicycle_rack)=358  traffic barrier(barrier)=308
+  human.pedestrian.stroller      N=    264  bike stand(bicycle_rack)=24  wheelchair(wheelchair_user)=20  person in wheelchair(wheelchair_user)=14
+  vehicle.bus.bendy              N=    450  emergency ambulance(ambulance)=60  passenger car(car)=58  passenger bus(bus_rigid)=50
+  animal                         N=    134  fallen object(debris)=50  pushchair(stroller)=18  bike stand(bicycle_rack)=10
+  human.pedestrian.child         N=    549  adult(adult_pedestrian)=52  pram(stroller)=35  walking person(adult_pedestrian)=32
+  static_object.bicycle_rack     N=   5932  two wheeler(motorcycle)=1332  road barrier(barrier)=690  bicycle(bicycle)=353
+  movable_object.debris          N=   3075  bike stand(bicycle_rack)=804  traffic barrier(barrier)=492  bicycle rack(bicycle_rack)=294
+  vehicle.emergency.police       N=    712  emergency ambulance(ambulance)=74  medical van(ambulance)=68  cargo truck(truck)=56
+
+Mean score matrix (rows=GT, cols=test_class):
+GT \ class                  bicycle motorcycle        car  bus_bendy  bus_rigid      truck  ambulance police_car constructi    trailer adult_pede child_pede wheelchair   stroller personal_m police_off constructi    barrier traffic_co pushable_o     debris bicycle_ra     animal
+animal                        0.015      0.006      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.002      0.010      0.011      0.053      0.019      0.000      0.000      0.000      0.000      0.015      0.014      0.010      0.053
+human.pedestrian.adult        0.001      0.001      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.057      0.031      0.008      0.001      0.001      0.013      0.021      0.000      0.000      0.001      0.000      0.000      0.000
+human.pedestrian.child        0.001      0.001      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.039      0.062      0.008      0.004      0.001      0.006      0.009      0.000      0.000      0.001      0.000      0.001      0.001
+human.pedestrian.construction_worker     0.001      0.001      0.000      0.000      0.000      0.000      0.000      0.000      0.001      0.000      0.036      0.017      0.007      0.002      0.001      0.022      0.063      0.000      0.000      0.001      0.000      0.001      0.000
+human.pedestrian.personal_mobility     0.016      0.006      0.000      0.000      0.000      0.001      0.000      0.001      0.004      0.000      0.014      0.008      0.006      0.010      0.012      0.005      0.008      0.000      0.000      0.011      0.000      0.012      0.000
+human.pedestrian.police_officer     0.001      0.001      0.000      0.000      0.000      0.000      0.000      0.000      0.001      0.000      0.063      0.029      0.010      0.001      0.001      0.049      0.070      0.000      0.000      0.001      0.000      0.001      0.000
+human.pedestrian.stroller     0.033      0.045      0.001      0.000      0.000      0.000      0.000      0.001      0.001      0.001      0.003      0.012      0.060      0.173      0.064      0.001      0.002      0.000      0.000      0.057      0.001      0.010      0.001
+human.pedestrian.wheelchair     0.007      0.011      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.006      0.027      0.046      0.005      0.004      0.009      0.011      0.000      0.000      0.001      0.000      0.000      0.000
+movable_object.barrier        0.000      0.000      0.000      0.000      0.000      0.001      0.000      0.000      0.000      0.005      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.009      0.000      0.001      0.001      0.001      0.000
+movable_object.debris         0.002      0.001      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.001      0.001      0.001      0.000      0.001      0.001      0.000      0.001      0.006      0.002      0.008      0.001      0.011      0.000
+movable_object.pushable_pullable     0.002      0.003      0.001      0.001      0.000      0.002      0.000      0.001      0.005      0.006      0.000      0.001      0.002      0.009      0.005      0.000      0.001      0.005      0.000      0.022      0.003      0.010      0.000
+movable_object.trafficcone     0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.001      0.000      0.000      0.000      0.000      0.001      0.004      0.056      0.003      0.001      0.001      0.000
+static_object.bicycle_rack     0.022      0.014      0.000      0.000      0.000      0.000      0.000      0.001      0.001      0.000      0.000      0.000      0.002      0.003      0.003      0.000      0.000      0.004      0.000      0.002      0.000      0.015      0.000
+vehicle.bicycle               0.099      0.023      0.000      0.000      0.000      0.000      0.000      0.001      0.000      0.000      0.004      0.004      0.009      0.014      0.012      0.002      0.002      0.001      0.000      0.005      0.000      0.024      0.000
+vehicle.bus.bendy             0.000      0.000      0.005      0.047      0.057      0.010      0.015      0.003      0.004      0.011      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.001      0.000      0.002      0.000      0.000      0.000
+vehicle.bus.rigid             0.000      0.000      0.006      0.054      0.067      0.017      0.024      0.004      0.004      0.014      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.001      0.000      0.000      0.000
+vehicle.car                   0.000      0.001      0.047      0.003      0.002      0.008      0.014      0.033      0.001      0.002      0.000      0.000      0.000      0.000      0.001      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000
+vehicle.construction          0.000      0.001      0.004      0.009      0.005      0.022      0.010      0.008      0.028      0.014      0.000      0.000      0.000      0.001      0.001      0.000      0.001      0.001      0.000      0.006      0.001      0.001      0.000
+vehicle.ego                   0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000
+vehicle.emergency.ambulance     0.000      0.000      0.013      0.025      0.031      0.018      0.057      0.015      0.001      0.004      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.001      0.000      0.000      0.000
+vehicle.emergency.police      0.000      0.002      0.029      0.003      0.002      0.007      0.009      0.034      0.001      0.002      0.000      0.000      0.001      0.001      0.001      0.001      0.000      0.000      0.000      0.000      0.000      0.000      0.000
+vehicle.motorcycle            0.026      0.075      0.001      0.000      0.000      0.001      0.000      0.004      0.004      0.000      0.004      0.004      0.019      0.020      0.030      0.011      0.006      0.000      0.000      0.006      0.000      0.003      0.000
+vehicle.trailer               0.000      0.000      0.001      0.007      0.004      0.029      0.010      0.002      0.009      0.030      0.000      0.000      0.000      0.000      0.001      0.000      0.000      0.002      0.000      0.003      0.000      0.001      0.000
+vehicle.truck                 0.000      0.000      0.007      0.017      0.013      0.053      0.037      0.014      0.010      0.026      0.000      0.000      0.000      0.000      0.001      0.000      0.000      0.001      0.000      0.003      0.000      0.000      0.000

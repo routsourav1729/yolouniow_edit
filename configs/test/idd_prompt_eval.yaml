@@ -1,0 +1,45 @@
+# Text-Visual Alignment Probe — IDD (multi-prompt per class)
+
+# Per anchor, the score for a test_class = sum_{p in prompts}(sigmoid(BN(Fvis)·E_p))
+# Within-class winner rate tracks which sub-prompt fires hardest on its own
+# GT-matched anchors (uses gt_alias). Cross-class winner rate tracks whether
+# the correct test_class beats every other class.
+
+experiment_tag: v2
+
+# ── Model + checkpoints ──────────────────────────────────────────────────────
+model_config: configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2.py
+checkpoint:   work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_train_task2_10shot_seed1_wapr_kume/best_owod_Both_epoch_40.pth
+
+text_encoder_pretrain_ckpt: pretrained/yolo_uniow_l_lora_bn_5e-4_100e_8gpus_obj365v1_goldg_train_lvis_minival.pth
+text_encoder_model_name:    openai/clip-vit-base-patch32
+text_encoder_use_lora:      true
+
+# ── Data ─────────────────────────────────────────────────────────────────────
+split:         test          # 'test' or 'train' (10-shot fewshot)
+num_images:    0              # 0 = all
+iou_threshold: 0.5
+
+# ── Inference perf ───────────────────────────────────────────────────────────
+batch_size:    16             # GPU batch size for forward
+num_workers:   12             # DataLoader image-loading workers
+amp:           true           # fp16 autocast on GPU
+
+# ── Test classes (each: name + prompts list/CSV + gt_alias) ──────────────────
+# `prompts` may be a YAML list OR a comma-separated string.
+# `gt_alias` MUST exactly match dataset annotation names.
+test_classes:
+  - { name: car,           prompts: "car",                                        gt_alias: [car] }
+  - { name: motorcycle,    prompts: "motorcycle, motorbike, two wheeler",                                 gt_alias: [motorcycle] }
+  - { name: rider,         prompts: "rider, motorcyclist, driver",  gt_alias: [rider] }
+  - { name: person,        prompts: "person, pedestrian, human",                         gt_alias: [person] }
+  - { name: autorickshaw,  prompts: "auto rickshaw, tuk tuk, three wheeler",      gt_alias: [autorickshaw] }
+  - { name: bicycle,       prompts: "bicycle, pedal bicycle",                                    gt_alias: [bicycle] }
+  - { name: traffic_sign,  prompts: "traffic sign,sign board, road traffic sign ",                               gt_alias: ["traffic sign"] }
+  - { name: traffic_light, prompts: "traffic light, traffic signal light, road signal lamp",                              gt_alias: ["traffic light"] }
+  - { name: bus,           prompts: "bus, passenger bus, city bus",                                        gt_alias: [bus] }
+  - { name: truck,         prompts: "truck, lorry, cargo truck",                  gt_alias: [truck] }
+  - { name: tanker,        prompts: "tanker truck, fuel tanker, water tanker",   gt_alias: [tanker_vehicle] }
+  - { name: crane_truck,   prompts: "crane truck, mobile crane, lifting crane",  gt_alias: [crane_truck] }
+  - { name: street_cart,   prompts: "street vendor cart, food cart, hand cart",  gt_alias: [street_cart] }
+  - { name: excavator,     prompts: "excavator, digging machine, yellow excavator, construction excavator", gt_alias: [excavator] }
