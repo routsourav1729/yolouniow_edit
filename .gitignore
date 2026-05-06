@@ -148,4 +148,4 @@ slurm_logs/
 
 # venus
 venus_run.sh
-/home/agipml/sourav.rout/ALL_FILES/hypyolo/YOLO-UniOW/results
+results/
