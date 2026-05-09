@@ -5,7 +5,7 @@
 # GT-matched anchors (uses gt_alias). Cross-class winner rate tracks whether
 # the correct test_class beats every other class.
 
-experiment_tag: v2
+experiment_tag: idd_auroc_v1
 
 # ── Model + checkpoints ──────────────────────────────────────────────────────
 model_config: configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2.py
@@ -28,18 +28,37 @@ amp:           true           # fp16 autocast on GPU
 # ── Test classes (each: name + prompts list/CSV + gt_alias) ──────────────────
 # `prompts` may be a YAML list OR a comma-separated string.
 # `gt_alias` MUST exactly match dataset annotation names.
+# test_classes:
+#   - { name: car,           prompts: "car",                                        gt_alias: [car] }
+#   - { name: motorcycle,    prompts: "motorcycle, motorbike, two wheeler",                                 gt_alias: [motorcycle] }
+#   - { name: rider,         prompts: "rider, motorcyclist, driver",  gt_alias: [rider] }
+#   - { name: person,        prompts: "person, pedestrian, human",                         gt_alias: [person] }
+#   - { name: autorickshaw,  prompts: "auto rickshaw, tuk tuk, three wheeler",      gt_alias: [autorickshaw] }
+#   - { name: bicycle,       prompts: "bicycle, pedal bicycle",                                    gt_alias: [bicycle] }
+#   - { name: traffic_sign,  prompts: "traffic sign,sign board, road traffic sign ",                               gt_alias: ["traffic sign"] }
+#   - { name: traffic_light, prompts: "traffic light, traffic signal light, road signal lamp",                              gt_alias: ["traffic light"] }
+#   - { name: bus,           prompts: "bus, passenger bus, city bus",                                        gt_alias: [bus] }
+#   - { name: truck,         prompts: "truck, lorry, cargo truck",                  gt_alias: [truck] }
+#   - { name: tanker,        prompts: "tanker truck, fuel tanker, water tanker",   gt_alias: [tanker_vehicle] }
+#   - { name: crane_truck,   prompts: "crane truck, mobile crane, lifting crane",  gt_alias: [crane_truck] }
+#   - { name: street_cart,   prompts: "street vendor cart, food cart, hand cart",  gt_alias: [street_cart] }
+#   - { name: excavator,     prompts: "excavator, digging machine, yellow excavator, construction excavator", gt_alias: [excavator] }
+# Prompts = default class name + 3 selected discriminative attributes
+# (from results/attributes/idd/selected_top3_lambda0.7.json, job 115523).
+# Attributes only — no classname. Selected by all-vs-all AUROC (job 115685).
+# AUROC shown as comment. autorickshaw (0.528) and rider (0.580) are marginal.
 test_classes:
-  - { name: car,           prompts: "car",                                        gt_alias: [car] }
-  - { name: motorcycle,    prompts: "motorcycle, motorbike, two wheeler",                                 gt_alias: [motorcycle] }
-  - { name: rider,         prompts: "rider, motorcyclist, driver",  gt_alias: [rider] }
-  - { name: person,        prompts: "person, pedestrian, human",                         gt_alias: [person] }
-  - { name: autorickshaw,  prompts: "auto rickshaw, tuk tuk, three wheeler",      gt_alias: [autorickshaw] }
-  - { name: bicycle,       prompts: "bicycle, pedal bicycle",                                    gt_alias: [bicycle] }
-  - { name: traffic_sign,  prompts: "traffic sign,sign board, road traffic sign ",                               gt_alias: ["traffic sign"] }
-  - { name: traffic_light, prompts: "traffic light, traffic signal light, road signal lamp",                              gt_alias: ["traffic light"] }
-  - { name: bus,           prompts: "bus, passenger bus, city bus",                                        gt_alias: [bus] }
-  - { name: truck,         prompts: "truck, lorry, cargo truck",                  gt_alias: [truck] }
-  - { name: tanker,        prompts: "tanker truck, fuel tanker, water tanker",   gt_alias: [tanker_vehicle] }
-  - { name: crane_truck,   prompts: "crane truck, mobile crane, lifting crane",  gt_alias: [crane_truck] }
-  - { name: street_cart,   prompts: "street vendor cart, food cart, hand cart",  gt_alias: [street_cart] }
-  - { name: excavator,     prompts: "excavator, digging machine, yellow excavator, construction excavator", gt_alias: [excavator] }
+  - { name: car,           prompts: "sedan side glazing, family car, estate car",                              gt_alias: [car] }
+  - { name: motorcycle,    prompts: "underbone motorcycle, motor bike, streetbike",                            gt_alias: [motorcycle] }
+  - { name: rider,         prompts: "knees flanking seat, feet on footrests, bent knees astride",              gt_alias: [rider] }
+  - { name: person,        prompts: "arms hanging naturally, walking stride posture, shoulders above torso",   gt_alias: [person] }
+  - { name: autorickshaw,  prompts: "small windshield pod, small front windshield, narrow tricycle footprint", gt_alias: [autorickshaw] }
+  - { name: bicycle,       prompts: "skinny fork legs, slender front fork, narrow saddle stem",                gt_alias: [bicycle] }
+  - { name: traffic_sign,  prompts: "street sign, road sign, speed sign",                                      gt_alias: ["traffic sign"] }
+  - { name: traffic_light, prompts: "traffic signal, intersection signal, road signal",                        gt_alias: ["traffic light"] }
+  - { name: bus,           prompts: "coach bus, destination display panel, shuttle bus",                       gt_alias: [bus] }
+  - { name: truck,         prompts: "rectangular load compartment, freight truck, box cargo body",             gt_alias: [truck] }
+  - { name: tanker,        prompts: "tanker truck, oil tanker truck, tank lorry",                              gt_alias: [tanker_vehicle] }
+  - { name: crane_truck,   prompts: "rotating crane turret, truck crane, mobile crane",                        gt_alias: [crane_truck] }
+  - { name: street_cart,   prompts: "produce display tray, market tray frame, wooden side boards",             gt_alias: [street_cart] }
+  - { name: excavator,     prompts: "rear backhoe arm, backhoe bucket linkage, backhoe excavator",             gt_alias: [excavator] }

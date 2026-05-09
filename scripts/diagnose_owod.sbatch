@@ -33,8 +33,18 @@ OUT_DIR=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dataset)   PYTHON_ARGS="$PYTHON_ARGS --dataset $2"; SELECTED_DATASET="$2"; shift 2;;
-        --config)    PYTHON_ARGS="$PYTHON_ARGS --config $2";  SELECTED_DATASET="custom";  shift 2;;
+        --config)    PYTHON_ARGS="$PYTHON_ARGS --config $2";
+                     # Infer dataset from config path to set correct env vars
+                     if echo "$2" | grep -qi "nuimage\|nuowodb"; then
+                         SELECTED_DATASET="nuimages"
+                     elif echo "$2" | grep -qi "idd"; then
+                         SELECTED_DATASET="idd"
+                     else
+                         SELECTED_DATASET="custom"
+                     fi
+                     shift 2;;
         --out-dir)   OUT_DIR="$2"; shift 2;;
+        --compare)   PYTHON_ARGS="$PYTHON_ARGS --compare"; shift 1;;
         *) echo "Unknown arg: $1"; exit 1;;
     esac
 done

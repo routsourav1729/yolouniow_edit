@@ -1,0 +1,50 @@
+# Discriminative Attribute Selection — nuOWODB (nuImages-based)
+experiment_tag: nuowodb_v1
+dataset_key:    nuimages
+
+model_config: configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_nuowodb_t2.py
+checkpoint:   work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_nuowodb_train_task2_10shot_seed1/best_owod_Both_epoch_10.pth
+
+text_encoder_pretrain_ckpt: pretrained/yolo_uniow_l_lora_bn_5e-4_100e_8gpus_obj365v1_goldg_train_lvis_minival.pth
+text_encoder_model_name:    openai/clip-vit-base-patch32
+text_encoder_use_lora:      true
+
+attributes_json: data/attributes/nuimages/nuimages_attribute.json
+out_dir:         results/attributes/nuowodb
+
+split:         train
+num_images:    0
+iou_thresholds: [0.7, 0.8, 0.9]
+
+batch_size:   8
+num_workers:  8
+amp:          true
+
+top_k:           [3, 5]
+lambda_div:      [0.5, 0.7, 0.9]
+primary_iou:     0.8
+low_n_threshold: 20
+
+fewshot_k:       10
+select_k:        10
+dataset_name:    nuOWODB
+dataset_root:    data/OWOD
+
+classes:
+  - { name: bicycle,              default: bicycle,              gt_alias: ["vehicle.bicycle"] }
+  - { name: motorcycle,           default: motorcycle,           gt_alias: ["vehicle.motorcycle"] }
+  - { name: car,                  default: car,                  gt_alias: ["vehicle.car"] }
+  - { name: bus_bendy,            default: articulated bus,      gt_alias: ["vehicle.bus.bendy"] }
+  - { name: bus_rigid,            default: bus,                  gt_alias: ["vehicle.bus.rigid"] }
+  - { name: truck,                default: truck,                gt_alias: ["vehicle.truck"] }
+  - { name: ambulance,            default: ambulance,            gt_alias: ["vehicle.emergency.ambulance"] }
+  - { name: police_car,           default: police car,           gt_alias: ["vehicle.emergency.police"] }
+  - { name: construction_vehicle, default: construction vehicle, gt_alias: ["vehicle.construction"] }
+  - { name: trailer,              default: trailer,              gt_alias: ["vehicle.trailer"] }
+  - { name: adult_pedestrian,     default: adult,                gt_alias: ["human.pedestrian.adult"] }
+  - { name: child_pedestrian,     default: child,                gt_alias: ["human.pedestrian.child"] }
+  - { name: wheelchair_user,      default: wheelchair,           gt_alias: ["human.pedestrian.wheelchair"] }
+  - { name: stroller,             default: stroller,             gt_alias: ["human.pedestrian.stroller"] }
+  - { name: personal_mobility,    default: scooter,              gt_alias: ["human.pedestrian.personal_mobility"] }
+  - { name: police_officer,       default: police officer,       gt_alias: ["human.pedestrian.police_officer"] }
+  - { name: construction_worker,  default: construction worker,  gt_alias: ["human.pedestrian.construction_worker"] }

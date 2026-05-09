@@ -1,165 +1,178 @@
-=== probe v=v2  N_imgs=21084  N_classes=14  N_unique_prompts=40 ===
+=== probe v=v2  N_imgs=51  N_classes=14  N_unique_prompts=56 ===
 
 Cross-class winner rate (correct class = highest summed sigmoid):
-  animal                    N=   4753 winner=  n/a  margin=  n/a
-  autorickshaw              N= 165451 winner=0.135  margin=-0.012
-  bicycle                   N=   7950 winner=0.539  margin=+0.025
-  bus                       N= 133670 winner=0.584  margin=+0.047
-  car                       N= 470195 winner=0.380  margin=+0.030
-  concrete_mixer            N=   2926 winner=  n/a  margin=  n/a
-  crane_truck               N=   3569 winner=0.574  margin=-0.012
-  excavator                 N=   4254 winner=0.092  margin=+0.002
-  motorcycle                N= 391209 winner=0.784  margin=+0.093
-  person                    N= 132819 winner=0.593  margin=+0.109
-  pole                      N=   9610 winner=  n/a  margin=  n/a
-  pull_cart                 N=   1740 winner=  n/a  margin=  n/a
-  rider                     N= 225778 winner=0.326  margin=-0.041
-  road_roller               N=   1142 winner=  n/a  margin=  n/a
-  street_cart               N=  23512 winner=0.691  margin=+0.039
-  tanker_vehicle            N=   9256 winner=0.249  margin=-0.021
-  tractor                   N=  13034 winner=  n/a  margin=  n/a
-  traffic light             N=   5677 winner=0.877  margin=+0.106
-  traffic sign              N=  47539 winner=0.767  margin=+0.038
-  truck                     N= 175583 winner=0.703  margin=+0.035
+  autorickshaw              N=    615 winner=0.132  margin=-0.005
+  bicycle                   N=      6 winner=0.500  margin=+0.139
+  bus                       N=    740 winner=0.461  margin=+0.024
+  car                       N=   1146 winner=0.394  margin=+0.029
+  crane_truck               N=    138 winner=0.725  margin=+0.006
+  excavator                 N=    275 winner=0.040  margin=-0.009
+  motorcycle                N=    985 winner=0.534  margin=+0.034
+  person                    N=    459 winner=0.643  margin=+0.074
+  rider                     N=    620 winner=0.168  margin=-0.051
+  street_cart               N=    206 winner=0.646  margin=+0.014
+  tanker_vehicle            N=    248 winner=0.113  margin=-0.020
+  traffic light             N=      1 winner=1.000  margin=+0.063
+  traffic sign              N=     27 winner=0.148  margin=+0.012
+  truck                     N=    785 winner=0.692  margin=+0.015
 
 Within-class winner rate (which sub-prompt wins per anchor):
-  motorcycle                N= 391209
-      motorcycle                     winner=0.350  mean=0.0534
-      motorbike                      winner=0.104  mean=0.0491
-      two wheeler                    winner=0.546  mean=0.0110
-  rider                     N= 225778
-      rider                          winner=0.168  mean=0.0183
-      motorcyclist                   winner=0.425  mean=0.0329
-      driver                         winner=0.407  mean=0.0184
-  person                    N= 132819
-      person                         winner=0.797  mean=0.0875
-      pedestrian                     winner=0.178  mean=0.0120
-      human                          winner=0.026  mean=0.0226
-  autorickshaw              N= 165451
-      auto rickshaw                  winner=0.288  mean=0.0185
-      tuk tuk                        winner=0.014  mean=0.0072
-      three wheeler                  winner=0.697  mean=0.0167
-  bicycle                   N=   7950
-      bicycle                        winner=0.468  mean=0.0393
-      pedal bicycle                  winner=0.532  mean=0.0160
-  traffic_sign              N=  47539
-      traffic sign                   winner=0.368  mean=0.0223
-      sign board                     winner=0.226  mean=0.0137
-      road traffic sign              winner=0.406  mean=0.0091
-  traffic_light             N=   5677
-      traffic light                  winner=0.640  mean=0.0649
-      traffic signal light           winner=0.074  mean=0.0414
-      road signal lamp               winner=0.287  mean=0.0134
-  bus                       N= 133670
-      bus                            winner=0.088  mean=0.0248
-      passenger bus                  winner=0.831  mean=0.0187
-      city bus                       winner=0.080  mean=0.0198
-  truck                     N= 175583
-      truck                          winner=0.133  mean=0.0286
-      lorry                          winner=0.012  mean=0.0204
-      cargo truck                    winner=0.856  mean=0.0208
-  tanker                    N=   9256
-      tanker truck                   winner=0.683  mean=0.0153
-      fuel tanker                    winner=0.010  mean=0.0077
-      water tanker                   winner=0.307  mean=0.0120
-  crane_truck               N=   3569
-      crane truck                    winner=0.535  mean=0.0119
-      mobile crane                   winner=0.143  mean=0.0108
-      lifting crane                  winner=0.322  mean=0.0075
-  street_cart               N=  23512
-      street vendor cart             winner=0.577  mean=0.0220
-      food cart                      winner=0.063  mean=0.0189
-      hand cart                      winner=0.360  mean=0.0233
-  excavator                 N=   4254
-      excavator                      winner=0.029  mean=0.0104
-      digging machine                winner=0.672  mean=0.0099
-      yellow excavator               winner=0.051  mean=0.0075
-      construction excavator         winner=0.248  mean=0.0105
+  car                       N=   1146
+      car                            winner=0.345  mean=0.0317
+      hatchback                      winner=0.067  mean=0.0107
+      trunked rear silhouette        winner=0.574  mean=0.0005
+      compact roof arc               winner=0.014  mean=0.0000
+  motorcycle                N=    985
+      motorcycle                     winner=0.441  mean=0.0435
+      underbone motorcycle           winner=0.342  mean=0.0004
+      round headlamp housing         winner=0.035  mean=0.0000
+      fuel tank saddle               winner=0.183  mean=0.0001
+  rider                     N=    620
+      rider                          winner=0.658  mean=0.0118
+      arms extended forward          winner=0.290  mean=0.0004
+      mounted rider                  winner=0.015  mean=0.0031
+      seated human silhouette        winner=0.037  mean=0.0015
+  person                    N=    459
+      person                         winner=0.636  mean=0.0804
+      shoulders above torso          winner=0.231  mean=0.0001
+      crossing pedestrian            winner=0.102  mean=0.0020
+      free standing silhouette       winner=0.031  mean=0.0001
+  autorickshaw              N=    615
+      auto rickshaw                  winner=0.567  mean=0.0177
+      rear bench compartment         winner=0.265  mean=0.0003
+      rounded front nose             winner=0.163  mean=0.0000
+      arched roof canopy             winner=0.005  mean=0.0000
+  bicycle                   N=      6
+      bicycle                        winner=0.500  mean=0.1405
+      slender front fork             winner=0.333  mean=0.0009
+      open triangle geometry         winner=0.167  mean=0.0000
+      narrow saddle seat             winner=0.000  mean=0.0000
+  traffic_sign              N=     27
+      traffic sign                   winner=0.667  mean=0.0264
+      geometric metal face           winner=0.037  mean=0.0001
+      stop sign                      winner=0.000  mean=0.0003
+      numbered speed plate           winner=0.296  mean=0.0005
+  traffic_light             N=      1
+      traffic light                  winner=1.000  mean=0.0642
+      vertical lantern face          winner=0.000  mean=0.0000
+      hooded signal lenses           winner=0.000  mean=0.0001
+      signal box face                winner=0.000  mean=0.0026
+  bus                       N=    740
+      bus                            winner=0.239  mean=0.0285
+      row of windows                 winner=0.164  mean=0.0003
+      tall flat nose                 winner=0.093  mean=0.0000
+      high coach profile             winner=0.504  mean=0.0006
+  truck                     N=    785
+      truck                          winner=0.154  mean=0.0247
+      dump truck                     winner=0.643  mean=0.0158
+      tall rear tailgate             winner=0.031  mean=0.0001
+      dual rear axle set             winner=0.172  mean=0.0000
+  tanker                    N=    248
+      tanker                         winner=0.395  mean=0.0098
+      hazard label panel             winner=0.036  mean=0.0000
+      cylindrical tank body          winner=0.065  mean=0.0006
+      rear valve assembly            winner=0.504  mean=0.0000
+  crane_truck               N=    138
+      crane truck                    winner=0.500  mean=0.0132
+      boom tip pulley                winner=0.319  mean=0.0008
+      truck crane                    winner=0.174  mean=0.0072
+      outrigger support legs         winner=0.007  mean=0.0000
+  street_cart               N=    206
+      street cart                    winner=0.893  mean=0.0282
+      produce display tray           winner=0.024  mean=0.0022
+      spoked cart axle               winner=0.078  mean=0.0000
+      wooden side boards             winner=0.005  mean=0.0001
+  excavator                 N=    275
+      excavator                      winner=0.415  mean=0.0091
+      articulated rear arm           winner=0.473  mean=0.0000
+      deep bucket teeth              winner=0.113  mean=0.0000
+      large rear tire                winner=0.000  mean=0.0000
 
 Per-prompt leakage diagnostic (sorted by net_useful = on_target_wins - off_target_wins):
   prompt                              parent               spec  within   on_wins  off_wins  steal%       net
-  car                                 car                 18.11      -     194140     30514   13.6%    163626
-  motorcycle                          motorcycle          31.41   0.350     95731     13047   12.0%     82684
-  passenger bus                       bus                 16.04   0.831     56297     18267   24.5%     38030
-  motorbike                           motorcycle          36.32   0.104     21139      4161   16.4%     16978
-  traffic sign                        traffic_sign       304.26   0.368     14877      2300   13.4%     12577
-  road traffic sign                   traffic_sign       237.36   0.406     13454      2428   15.3%     11026
-  city bus                            bus                 18.15   0.080      7424      2429   24.7%      4995
-  motorcyclist                        rider               20.42   0.425      8695      5950   40.6%      2745
-  bus                                 bus                 13.46   0.088      7990      5912   42.5%      2078
-  pedestrian                          person              19.86   0.178      4316      2442   36.1%      1874
-  rider                               rider               37.16   0.168      5806      4575   44.1%      1231
-  sign board                          traffic_sign       174.54   0.226      7195      6273   46.6%       922
-  tuk tuk                             autorickshaw        17.49   0.014       702       284   28.8%       418
-  auto rickshaw                       autorickshaw        10.33   0.288      4015      3604   47.3%       411
-  human                               person               7.46   0.026       535       451   45.7%        84
-  excavator                           excavator           28.73   0.029        48       271   85.0%      -223
-  traffic light                       traffic_light      588.14   0.640      3241      3566   52.4%      -325
-  yellow excavator                    excavator           23.53   0.051        10       469   97.9%      -459
-  truck                               truck                8.74   0.133     12906     13583   51.3%      -677
-  mobile crane                        crane_truck         94.00   0.143       344      1215   77.9%      -871
-  fuel tanker                         tanker              14.82   0.010        54       989   94.8%      -935
-  lorry                               truck                8.17   0.012       927      2247   70.8%     -1320
-  construction excavator              excavator           27.94   0.248        37      1724   97.9%     -1687
-  food cart                           street_cart         10.93   0.063       611      2413   79.8%     -1802
-  traffic signal light                traffic_light      849.20   0.074       397      2858   87.8%     -2461
-  lifting crane                       crane_truck        265.35   0.322       910      5092   84.8%     -4182
-  crane truck                         crane_truck         21.98   0.535       714      5441   88.4%     -4727
-  digging machine                     excavator           16.65   0.672       142      7003   98.0%     -6861
-  road signal lamp                    traffic_light      413.01   0.287      1268      8992   87.6%     -7724
-  two wheeler                         motorcycle          16.47   0.546    155371    163356   51.3%     -7985
-  tanker truck                        tanker               8.65   0.683       415      8808   95.5%     -8393
-  pedal bicycle                       bicycle             78.74   0.532      2155     11237   83.9%     -9082
-  bicycle                             bicycle             35.20   0.468      2172     12942   85.6%    -10770
-  street vendor cart                  street_cart         18.16   0.577      8159     19968   71.0%    -11809
-  water tanker                        tanker              13.70   0.307       815     19757   96.0%    -18942
-  driver                              rider               43.94   0.407     46923     71789   60.5%    -24866
-  hand cart                           street_cart         23.66   0.360      5867     37842   86.6%    -31975
-  three wheeler                       autorickshaw         4.75   0.697     17963     60618   77.1%    -42655
-  person                              person               7.47   0.797     74708    122454   62.1%    -47746
-  cargo truck                         truck               10.47   0.856    117714    246209   67.7%   -128495
+  motorcycle                          motorcycle          55.26   0.441       268        73   21.4%       195
+  car                                 car                 28.02   0.345       262        93   26.2%       169
+  underbone motorcycle                motorcycle          28.13   0.342       165        22   11.8%       143
+  bus                                 bus                 17.71   0.239       109        23   17.4%        86
+  row of windows                      bus                 50.27   0.164        56         4    6.7%        52
+  high coach profile                  bus                 13.40   0.504       176       125   41.5%        51
+  rider                               rider               26.14   0.658        62        17   21.5%        45
+  hatchback                           car                 31.16   0.067        30         0    0.0%        30
+  truck                               truck                6.03   0.154        79        52   39.7%        27
+  truck crane                         crane_truck         39.85   0.174        21        13   38.2%         8
+  auto rickshaw                       autorickshaw        11.11   0.567        30        22   42.3%         8
+  traffic sign                        traffic_sign       1637.90   0.667         2         0    0.0%         2
+  produce display tray                street_cart        328.35   0.024         2         0    0.0%         2
+  tall flat nose                      bus                  3.02   0.093         0         0    0.0%         0
+  stop sign                           traffic_sign        63.81   0.000         0         0    0.0%         0
+  geometric metal face                traffic_sign        19.72   0.037         0         0    0.0%         0
+  boom tip pulley                     crane_truck        115.13   0.319        36        36   50.0%         0
+  numbered speed plate                traffic_sign        79.28   0.296         2         2   50.0%         0
+  seated human silhouette             rider                7.53   0.037         1         1   50.0%         0
+  excavator                           excavator           16.53   0.415         5         6   54.5%        -1
+  signal box face                     traffic_light       59.20   0.000         0         1  100.0%        -1
+  vertical lantern face               traffic_light        7.26   0.000         0         1  100.0%        -1
+  deep bucket teeth                   excavator            0.73   0.113         0         1  100.0%        -1
+  traffic light                       traffic_light      3413.66   1.000         1         2   66.7%        -1
+  outrigger support legs              crane_truck          3.62   0.007         0         2  100.0%        -2
+  mounted rider                       rider               24.03   0.015         1         3   75.0%        -2
+  spoked cart axle                    street_cart          3.27   0.078         0         3  100.0%        -3
+  arched roof canopy                  autorickshaw         0.81   0.005         1         7   87.5%        -6
+  slender front fork                  bicycle            324.22   0.333         1         7   87.5%        -6
+  fuel tank saddle                    motorcycle           2.68   0.183        91        98   51.9%        -7
+  wooden side boards                  street_cart        111.42   0.005         0         7  100.0%        -7
+  free standing silhouette            person               4.80   0.031         1         8   88.9%        -7
+  arms extended forward               rider               20.48   0.290        40        48   54.5%        -8
+  compact roof arc                    car                  0.17   0.014         2        11   84.6%        -9
+  narrow saddle seat                  bicycle              0.16   0.000         0         9  100.0%        -9
+  hazard label panel                  tanker               0.99   0.036         1        14   93.3%       -13
+  large rear tire                     excavator            0.10   0.000         0        15  100.0%       -15
+  open triangle geometry              bicycle              0.14   0.167         0        19  100.0%       -19
+  articulated rear arm                excavator            1.33   0.473         6        26   81.2%       -20
+  tanker                              tanker               9.69   0.395         5        25   83.3%       -20
+  rear bench compartment              autorickshaw         4.10   0.265        39        72   64.9%       -33
+  cylindrical tank body               tanker               6.67   0.065         3        37   92.5%       -34
+  crane truck                         crane_truck         10.20   0.500        43        78   64.5%       -35
+  tall rear tailgate                  truck                2.18   0.031         2        40   95.2%       -38
+  round headlamp housing              motorcycle           2.34   0.035         2        45   95.7%       -43
+  bicycle                             bicycle            184.49   0.500         2        46   95.8%       -44
+  crossing pedestrian                 person              11.77   0.102        12        56   82.4%       -44
+  shoulders above torso               person               7.62   0.231        53       100   65.4%       -47
+  hooded signal lenses                traffic_light        5.46   0.000         0        55  100.0%       -55
+  trunked rear silhouette             car                  1.30   0.574       158       218   58.0%       -60
+  person                              person              10.52   0.636       229       324   58.6%       -95
+  rounded front nose                  autorickshaw         0.66   0.163        11       149   93.1%      -138
+  dump truck                          truck                5.09   0.643       358       524   59.4%      -166
+  street cart                         street_cart          9.98   0.893       131       301   69.7%      -170
+  rear valve assembly                 tanker               3.62   0.504        19       241   92.7%      -222
+  dual rear axle set                  truck                1.33   0.172       104       547   84.0%      -443
 
-Top-3 stealers per GT class (which prompts steal anchors from this class):
-  traffic sign                   N=  47539  road signal lamp(traffic_light)=2259  person(person)=2127  traffic light(traffic_light)=2006
-  bus                            N= 133670  cargo truck(truck)=40941  two wheeler(motorcycle)=4296  driver(rider)=3082
-  person                         N= 132819  driver(rider)=14293  hand cart(street_cart)=12842  two wheeler(motorcycle)=7010
-  truck                          N= 175583  passenger bus(bus)=5304  two wheeler(motorcycle)=4767  car(car)=4405
-  rider                          N= 225778  person(person)=89707  two wheeler(motorcycle)=42587  motorcycle(motorcycle)=9020
-  motorcycle                     N= 391209  three wheeler(autorickshaw)=45766  person(person)=19347  hand cart(street_cart)=10073
-  pull_cart                      N=   1740  hand cart(street_cart)=590  cargo truck(truck)=416  street vendor cart(street_cart)=311
-  autorickshaw                   N= 165451  cargo truck(truck)=75913  two wheeler(motorcycle)=15893  car(car)=10293
-  street_cart                    N=  23512  cargo truck(truck)=4821  two wheeler(motorcycle)=1560  three wheeler(autorickshaw)=794
-  car                            N= 470195  cargo truck(truck)=96709  two wheeler(motorcycle)=83216  driver(rider)=40514
-  tractor                        N=  13034  cargo truck(truck)=9671  two wheeler(motorcycle)=742  water tanker(tanker)=548
-  crane_truck                    N=   3569  cargo truck(truck)=1061  water tanker(tanker)=123  digging machine(excavator)=61
-  bicycle                        N=   7950  two wheeler(motorcycle)=1882  hand cart(street_cart)=575  motorcycle(motorcycle)=262
-  pole                           N=   9610  road signal lamp(traffic_light)=4634  lifting crane(crane_truck)=1696  traffic sign(traffic_sign)=1036
-  traffic light                  N=   5677  traffic sign(traffic_sign)=406  road traffic sign(traffic_sign)=160  sign board(traffic_sign)=62
-  tanker_vehicle                 N=   9256  cargo truck(truck)=6544  truck(truck)=225  crane truck(crane_truck)=216
-  excavator                      N=   4254  cargo truck(truck)=2118  crane truck(crane_truck)=741  lifting crane(crane_truck)=301
-  road_roller                    N=   1142  cargo truck(truck)=807  water tanker(tanker)=109  crane truck(crane_truck)=44
-  concrete_mixer                 N=   2926  cargo truck(truck)=1537  tanker truck(tanker)=390  water tanker(tanker)=281
-  animal                         N=   4753  person(person)=1367  two wheeler(motorcycle)=744  cargo truck(truck)=325
+Top-3 stealers per GT class:
+  bus                            N=    740  rounded front nose(autorickshaw)=98  trunked rear silhouette(car)=83  dual rear axle set(truck)=57
+  truck                          N=    785  trunked rear silhouette(car)=35  rear bench compartment(autorickshaw)=32  cylindrical tank body(tanker)=23
+  car                            N=   1146  dual rear axle set(truck)=200  high coach profile(bus)=89  dump truck(truck)=86
+  person                         N=    459  arms extended forward(rider)=25  motorcycle(motorcycle)=21  trunked rear silhouette(car)=20
+  rider                          N=    620  person(person)=235  shoulders above torso(person)=61  motorcycle(motorcycle)=46
+  autorickshaw                   N=    615  street cart(street_cart)=151  dump truck(truck)=127  dual rear axle set(truck)=74
+  motorcycle                     N=    985  rear valve assembly(tanker)=102  dual rear axle set(truck)=81  person(person)=56
+  street_cart                    N=    206  dump truck(truck)=26  dual rear axle set(truck)=22  rear valve assembly(tanker)=8
+  tanker_vehicle                 N=    248  dump truck(truck)=115  dual rear axle set(truck)=48  crane truck(crane_truck)=13
+  crane_truck                    N=    138  dump truck(truck)=18  rear valve assembly(tanker)=7  excavator(excavator)=4
+  excavator                      N=    275  dump truck(truck)=106  dual rear axle set(truck)=59  crane truck(crane_truck)=30
 
 Mean score matrix (rows=GT, cols=test_class):
 GT \ class                      car motorcycle      rider     person autoricksh    bicycle traffic_si traffic_li        bus      truck     tanker crane_truc street_car  excavator
-animal                        0.001      0.003      0.002      0.007      0.002      0.001      0.000      0.000      0.000      0.001      0.000      0.000      0.001      0.001
-autorickshaw                  0.007      0.005      0.001      0.001      0.042      0.000      0.000      0.000      0.013      0.040      0.007      0.001      0.024      0.003
-bicycle                       0.000      0.026      0.001      0.003      0.003      0.055      0.000      0.000      0.000      0.000      0.000      0.000      0.004      0.000
-bus                           0.001      0.000      0.000      0.000      0.002      0.000      0.000      0.000      0.063      0.016      0.003      0.001      0.002      0.001
-car                           0.038      0.001      0.000      0.001      0.004      0.000      0.000      0.000      0.003      0.005      0.001      0.000      0.001      0.000
-concrete_mixer                0.000      0.002      0.000      0.000      0.005      0.000      0.000      0.000      0.002      0.031      0.033      0.009      0.002      0.037
-crane_truck                   0.000      0.000      0.000      0.000      0.002      0.000      0.000      0.000      0.002      0.017      0.015      0.030      0.002      0.034
-excavator                     0.000      0.001      0.000      0.000      0.007      0.000      0.000      0.000      0.004      0.024      0.020      0.018      0.003      0.038
-motorcycle                    0.002      0.114      0.006      0.006      0.012      0.005      0.000      0.000      0.000      0.000      0.000      0.000      0.002      0.001
-person                        0.001      0.003      0.010      0.122      0.001      0.001      0.000      0.000      0.000      0.000      0.000      0.000      0.001      0.000
-pole                          0.000      0.000      0.000      0.002      0.000      0.000      0.001      0.001      0.000      0.000      0.000      0.000      0.000      0.000
-pull_cart                     0.000      0.004      0.000      0.000      0.016      0.001      0.000      0.000      0.000      0.006      0.001      0.001      0.038      0.005
-rider                         0.002      0.013      0.070      0.103      0.003      0.001      0.000      0.000      0.000      0.001      0.000      0.000      0.001      0.001
-road_roller                   0.001      0.001      0.000      0.000      0.012      0.000      0.000      0.000      0.003      0.042      0.036      0.009      0.009      0.029
-street_cart                   0.000      0.005      0.000      0.000      0.020      0.002      0.000      0.000      0.001      0.008      0.002      0.001      0.064      0.004
-tanker_vehicle                0.001      0.001      0.000      0.000      0.008      0.000      0.000      0.000      0.010      0.050      0.035      0.006      0.004      0.014
-tractor                       0.001      0.004      0.000      0.000      0.015      0.000      0.000      0.000      0.001      0.038      0.018      0.005      0.006      0.017
-traffic light                 0.000      0.000      0.000      0.001      0.000      0.000      0.013      0.120      0.000      0.000      0.000      0.000      0.000      0.000
-traffic sign                  0.000      0.000      0.000      0.002      0.000      0.000      0.045      0.004      0.001      0.001      0.000      0.000      0.000      0.000
-truck                         0.002      0.001      0.000      0.000      0.007      0.000      0.001      0.000      0.018      0.070      0.017      0.004      0.008      0.004
+autorickshaw                  0.004      0.001      0.000      0.001      0.018      0.000      0.000      0.000      0.004      0.011      0.001      0.001      0.018      0.001
+bicycle                       0.000      0.001      0.000      0.000      0.000      0.140      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000
+bus                           0.001      0.000      0.000      0.000      0.001      0.000      0.000      0.000      0.029      0.004      0.001      0.000      0.001      0.000
+car                           0.032      0.000      0.000      0.001      0.001      0.000      0.000      0.000      0.000      0.002      0.000      0.000      0.000      0.000
+crane_truck                   0.001      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.004      0.003      0.014      0.000      0.008
+excavator                     0.001      0.000      0.000      0.000      0.001      0.000      0.000      0.000      0.000      0.016      0.004      0.011      0.001      0.009
+motorcycle                    0.002      0.044      0.001      0.005      0.001      0.004      0.000      0.000      0.000      0.000      0.000      0.000      0.001      0.000
+person                        0.001      0.002      0.004      0.080      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000
+rider                         0.001      0.003      0.012      0.061      0.001      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000      0.000
+street_cart                   0.000      0.001      0.000      0.000      0.010      0.003      0.000      0.000      0.001      0.004      0.001      0.001      0.028      0.001
+tanker_vehicle                0.001      0.000      0.000      0.000      0.003      0.000      0.000      0.000      0.007      0.029      0.010      0.006      0.004      0.003
+traffic light                 0.000      0.000      0.000      0.000      0.000      0.000      0.001      0.064      0.000      0.000      0.000      0.000      0.000      0.000
+traffic sign                  0.001      0.000      0.000      0.003      0.000      0.011      0.027      0.003      0.000      0.000      0.002      0.000      0.000      0.000
+truck                         0.001      0.000      0.000      0.000      0.002      0.000      0.000      0.000      0.005      0.025      0.004      0.003      0.003      0.000

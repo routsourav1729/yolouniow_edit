@@ -1,10 +1,11 @@
 # Text-Visual Alignment Probe — nuOWODB (nuImages-based OWOD)
 #
-# 23 classes across T1 (base) + T2 (novel) + T3 (novel2).
+# 17 classes across T1 (base, 10 vehicles) + T2 (novel, 7 pedestrians).
+# T3 classes are not part of the OWOD evaluation we care about and are excluded.
 # gt_alias MUST match the dotted nuScenes annotation names exactly.
 # 3 prompts per class: plain label → synonym → descriptive noun phrase.
 
-experiment_tag: v1
+experiment_tag: nuowodb_auroc_v1
 
 # ── Model + checkpoints ──────────────────────────────────────────────────────
 model_config: configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_nuowodb_t2.py
@@ -25,98 +26,75 @@ num_workers:   12
 amp:           true
 
 # ── Test classes ─────────────────────────────────────────────────────────────
+# Prompts = default class name + 3 selected discriminative attributes
+# (from results/attributes/nuowodb/selected_top3_lambda0.7.json, job 115524).
 # T1 — base (10 vehicle classes)
+# Attributes only — no classname. Selected by all-vs-all AUROC (job 115686).
 test_classes:
   - name: bicycle
-    prompts: "bicycle, bike, pedal bicycle"
+    prompts: "handlebar stem assembly, chainring near pedals, slender front fork"
     gt_alias: ["vehicle.bicycle"]
 
   - name: motorcycle
-    prompts: "motorcycle, motorbike, two wheeler"
+    prompts: "motor bike, sportbike, motorbike"
     gt_alias: ["vehicle.motorcycle"]
 
   - name: car
-    prompts: "car, sedan, passenger car"
+    prompts: "four side doors, sedan side glazing, smooth bumper fascia"
     gt_alias: ["vehicle.car"]
 
   - name: bus_bendy
-    prompts: "articulated bus, bendy bus, accordion bus"
+    prompts: "articulated bus, extended transit bus, two segment cabin"
     gt_alias: ["vehicle.bus.bendy"]
 
   - name: bus_rigid
-    prompts: "bus, city bus, passenger bus"
+    prompts: "school bus, large side windows, destination display panel"
     gt_alias: ["vehicle.bus.rigid"]
 
   - name: truck
-    prompts: "truck, lorry, cargo truck"
+    prompts: "truck, pickup truck, delivery truck"
     gt_alias: ["vehicle.truck"]
 
   - name: ambulance
-    prompts: "ambulance, emergency ambulance, medical van"
+    prompts: "emergency van, rescue van, paramedic van"
     gt_alias: ["vehicle.emergency.ambulance"]
 
   - name: police_car
-    prompts: "police car, patrol car, police vehicle"
+    prompts: "marked police car, patrol sedan, police car"
     gt_alias: ["vehicle.emergency.police"]
 
   - name: construction_vehicle
-    prompts: "construction vehicle, bulldozer, excavator"
+    prompts: "site work attachment, backhoe loader, bulldozer"
     gt_alias: ["vehicle.construction"]
 
   - name: trailer
-    prompts: "trailer, semi trailer, cargo trailer"
+    prompts: "semi trailer, container trailer, box trailer"
     gt_alias: ["vehicle.trailer"]
 
-  # T2 — novel (7 pedestrian classes)
   - name: adult_pedestrian
-    prompts: "adult pedestrian, walking person, adult"
+    prompts: "upright walking posture, unassisted walking stance, long stride posture"
     gt_alias: ["human.pedestrian.adult"]
 
   - name: child_pedestrian
-    prompts: "child, kid walking, young pedestrian"
+    prompts: "toddler, short leg proportions, child"
     gt_alias: ["human.pedestrian.child"]
 
   - name: wheelchair_user
-    prompts: "wheelchair user, person in wheelchair, wheelchair"
+    prompts: "occupied wheelchair, wheelchair, seated wheelchair"
     gt_alias: ["human.pedestrian.wheelchair"]
 
   - name: stroller
-    prompts: "baby stroller, pushchair, pram"
+    prompts: "stroller, folding stroller, baby pram"
     gt_alias: ["human.pedestrian.stroller"]
 
   - name: personal_mobility
-    prompts: "electric scooter, personal mobility device, hoverboard"
+    prompts: "standing scooter, single front stem, hoverboard"
     gt_alias: ["human.pedestrian.personal_mobility"]
 
   - name: police_officer
-    prompts: "police officer, uniformed officer, law enforcement officer"
+    prompts: "dark uniform trousers, police uniform shirt, official shoulder patches"
     gt_alias: ["human.pedestrian.police_officer"]
 
   - name: construction_worker
-    prompts: "construction worker, hard hat worker, site worker"
+    prompts: "construction safety vest, safety workwear outfit, bright work vest"
     gt_alias: ["human.pedestrian.construction_worker"]
-
-  # T3 — novel2 (6 object classes)
-  - name: barrier
-    prompts: "road barrier, concrete barrier, traffic barrier"
-    gt_alias: ["movable_object.barrier"]
-
-  - name: traffic_cone
-    prompts: "traffic cone, orange cone, road cone"
-    gt_alias: ["movable_object.trafficcone"]
-
-  - name: pushable_object
-    prompts: "pushable object, wheeled cart, trolley"
-    gt_alias: ["movable_object.pushable_pullable"]
-
-  - name: debris
-    prompts: "road debris, fallen object, rubble on road"
-    gt_alias: ["movable_object.debris"]
-
-  - name: bicycle_rack
-    prompts: "bicycle rack, bike stand, cycle parking rack"
-    gt_alias: ["static_object.bicycle_rack"]
-
-  - name: animal
-    prompts: "animal, dog, cat"
-    gt_alias: ["animal"]

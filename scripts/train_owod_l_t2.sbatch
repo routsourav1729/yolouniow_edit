@@ -35,6 +35,8 @@
 #   --threshold T         Detection threshold (default: 0.05)
 #   --config PATH         Override T2 config file path
 #   --t1-ckpt PATH        Override T1 best checkpoint path (auto-detected by default)
+#   --alpha A             TAL assigner cls-score exponent (default: 0.5, try 0.25)
+#   --beta B              TAL assigner IoU exponent (default: 6.0, try 8.0)
 # ============================================================================
 
 # ─── Parse arguments ─────────────────────────────────────────────────────────
@@ -43,10 +45,14 @@ FEWSHOT_K=10
 FEWSHOT_SEED=1
 USE_WAPR=0
 USE_KUME=0
+USE_KUME_KVK=0
+KUME_KVK_MARGIN_ARG=""
 NUM_GPUS=""
 THRESHOLD=0.05
 CONFIG_OVERRIDE=""
 T1_CKPT_OVERRIDE=""
+TAL_ALPHA=""
+TAL_BETA=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -56,13 +62,17 @@ while [[ $# -gt 0 ]]; do
         --wapr)       USE_WAPR=1; shift 1 ;;
         --kume)       USE_KUME=1; shift 1 ;;
         --wapr-kume)  USE_WAPR=1; USE_KUME=1; shift 1 ;;
+        --kume-kvk)   USE_KUME_KVK=1; shift 1 ;;
+        --kvk-margin) KUME_KVK_MARGIN_ARG="$2"; shift 2 ;;
         --gpus)       NUM_GPUS="$2"; shift 2 ;;
         --threshold)  THRESHOLD="$2"; shift 2 ;;
         --config)     CONFIG_OVERRIDE="$2"; shift 2 ;;
         --t1-ckpt)    T1_CKPT_OVERRIDE="$2"; shift 2 ;;
+        --alpha)      TAL_ALPHA="$2"; shift 2 ;;
+        --beta)       TAL_BETA="$2"; shift 2 ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: sbatch scripts/train_owod_l_t2.sbatch --dataset DATASET [--shot K] [--seed S] [--wapr|--kume|--wapr-kume] [--gpus N] [--threshold T] [--config PATH] [--t1-ckpt PATH]"
+            echo "Usage: sbatch scripts/train_owod_l_t2.sbatch --dataset DATASET [--shot K] [--seed S] [--wapr|--kume|--wapr-kume] [--gpus N] [--threshold T] [--config PATH] [--t1-ckpt PATH] [--alpha A] [--beta B]"
             exit 1
             ;;
     esac
@@ -76,6 +86,14 @@ if [ -z "$DATASET" ]; then
 fi
 
 NUM_GPUS=${NUM_GPUS:-${SLURM_GPUS_ON_NODE:-1}}
+
+# ─── Build TAL alpha/beta cfg-options string ──────────────────────────────────
+TAL_CFG_OPTIONS=""
+if [ -n "$TAL_ALPHA" ] || [ -n "$TAL_BETA" ]; then
+    _A=${TAL_ALPHA:-0.5}
+    _B=${TAL_BETA:-6.0}
+    TAL_CFG_OPTIONS="model.train_cfg.one2many_assigner.alpha=${_A} model.train_cfg.one2many_assigner.beta=${_B} model.train_cfg.one2one_assigner.alpha=${_A} model.train_cfg.one2one_assigner.beta=${_B}"
+fi
 
 # ─── Route logs to dataset subfolder ─────────────────────────────────────────
 case "$DATASET" in
@@ -102,6 +120,8 @@ case $DATASET in
         # Anchor: nuowodb_object_tuned.npy (extracted from nuOWODB T1 checkpoint)
         if [ -n "$CONFIG_OVERRIDE" ]; then
             CONFIG="$CONFIG_OVERRIDE"
+        elif [ "$USE_KUME_KVK" -eq 1 ]; then
+            CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_nuowodb_t2_kume_kvk.py
         else
             CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_nuowodb_t2.py
         fi
@@ -112,6 +132,8 @@ case $DATASET in
     IDD)
         if [ -n "$CONFIG_OVERRIDE" ]; then
             CONFIG="$CONFIG_OVERRIDE"
+        elif [ "$USE_KUME_KVK" -eq 1 ]; then
+            CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2_kume_kvk.py
         elif [ "$USE_KUME" -eq 1 ]; then
             # kume config now includes wapr dict — covers both --kume and --wapr --kume
             CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2_kume.py
@@ -164,7 +186,14 @@ fi
 
 # T2 directories
 METHOD_SUFFIX=""
-if [ "$USE_KUME" -eq 1 ] && [ "$USE_WAPR" -eq 1 ]; then
+if [ "$USE_KUME_KVK" -eq 1 ]; then
+    # Resolve effective margin: --kvk-margin arg > env var > default 0.5
+    if [ -n "$KUME_KVK_MARGIN_ARG" ]; then
+        export KUME_KVK_MARGIN="$KUME_KVK_MARGIN_ARG"
+    fi
+    EFFECTIVE_MARGIN="${KUME_KVK_MARGIN:-0.5}"
+    METHOD_SUFFIX="_kume_kvk_m${EFFECTIVE_MARGIN}"
+elif [ "$USE_KUME" -eq 1 ] && [ "$USE_WAPR" -eq 1 ]; then
     METHOD_SUFFIX="_wapr_kume"
 elif [ "$USE_KUME" -eq 1 ]; then
     METHOD_SUFFIX="_kume"
@@ -186,7 +215,10 @@ echo "  Dataset:       $DATASET"
 echo "  Task:          2 (Few-shot finetuning)"
 echo "  WAPR:          $USE_WAPR"
 echo "  KUME:          $USE_KUME"
+echo "  KUME-KVK:      $USE_KUME_KVK${USE_KUME_KVK:+ (margin=${KUME_KVK_MARGIN:-0.5})}"
 echo "  Config:        $CONFIG"
+echo "  TAL alpha:     ${TAL_ALPHA:-0.5 (default)}"
+echo "  TAL beta:      ${TAL_BETA:-6.0 (default)}"
 echo "  Few-shot:      k=${FEWSHOT_K}, seed=${FEWSHOT_SEED}"
 echo "  Fewshot dir:   $FEWSHOT_DIR"
 echo "  T1 checkpoint: ${T1_BEST:-<not found>}"
@@ -293,7 +325,7 @@ DATASET=${DATASET} TASK=2 THRESHOLD=${THRESHOLD} SAVE=False \
     ./tools/dist_train_owod.sh ${CONFIG} ${NUM_GPUS} \
     --amp \
     --work-dir ${T2_WORK_DIR} \
-    --cfg-options load_from=${T1_BEST}
+    --cfg-options load_from=${T1_BEST} ${TAL_CFG_OPTIONS}
 
 T2_TRAIN_RC=$?
 if [ $T2_TRAIN_RC -ne 0 ]; then

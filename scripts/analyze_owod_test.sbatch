@@ -88,10 +88,15 @@ export DATASET TASK
 case "$METHOD" in
     wapr-kume)   METHOD_SUFFIX="_wapr_kume" ;;
     kume)        METHOD_SUFFIX="_kume" ;;
+    kume-kvk)
+        # Margin from env KUME_KVK_MARGIN (default 0.5). Workdir suffix encodes margin.
+        _M="${KUME_KVK_MARGIN:-0.5}"
+        METHOD_SUFFIX="_kume_kvk_m${_M}"
+        ;;
     wapr)        METHOD_SUFFIX="_wapr" ;;
     baseline|"") METHOD_SUFFIX="" ;;
     all)         METHOD_SUFFIX="" ;;   # resolved per-entry in all mode
-    *)           echo "ERROR: Unknown --method '$METHOD'. Use: baseline wapr kume wapr-kume all"; exit 1 ;;
+    *)           echo "ERROR: Unknown --method '$METHOD'. Use: baseline wapr kume kume-kvk wapr-kume all"; exit 1 ;;
 esac
 
 # ─── Auto-detect config and checkpoint ────────────────────────────────────
@@ -108,6 +113,8 @@ case $DATASET in
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd.py
             elif [ "$METHOD" = "wapr-kume" ] || [ "$METHOD" = "kume" ]; then
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2_kume.py
+            elif [ "$METHOD" = "kume-kvk" ]; then
+                CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2_kume_kvk.py
             elif [ "$METHOD" = "wapr" ]; then
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_wapr.py
             else
@@ -151,6 +158,8 @@ case $DATASET in
             if [ "$TASK" -eq 1 ]; then
                 # T1 uses base OWOD config with DATASET=nuOWODB TASK=1 env vars
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod.py
+            elif [ "$METHOD" = "kume-kvk" ]; then
+                CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_nuowodb_t2_kume_kvk.py
             else
                 # T2 fewshot baseline config
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_nuowodb_t2.py

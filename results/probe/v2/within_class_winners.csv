@@ -1,40 +1,57 @@
 test_class,N,prompt,winner_rate,mean_score
-motorcycle,391209,motorcycle,0.3503,0.0534
-motorcycle,391209,motorbike,0.1039,0.0491
-motorcycle,391209,two wheeler,0.5458,0.0110
-rider,225778,rider,0.1680,0.0183
-rider,225778,motorcyclist,0.4254,0.0329
-rider,225778,driver,0.4067,0.0184
-person,132819,person,0.7969,0.0875
-person,132819,pedestrian,0.1776,0.0120
-person,132819,human,0.0255,0.0226
-autorickshaw,165451,auto rickshaw,0.2882,0.0185
-autorickshaw,165451,tuk tuk,0.0145,0.0072
-autorickshaw,165451,three wheeler,0.6974,0.0167
-bicycle,7950,bicycle,0.4675,0.0393
-bicycle,7950,pedal bicycle,0.5325,0.0160
-traffic_sign,47539,traffic sign,0.3681,0.0223
-traffic_sign,47539,sign board,0.2256,0.0137
-traffic_sign,47539,road traffic sign,0.4063,0.0091
-traffic_light,5677,traffic light,0.6396,0.0649
-traffic_light,5677,traffic signal light,0.0738,0.0414
-traffic_light,5677,road signal lamp,0.2866,0.0134
-bus,133670,bus,0.0884,0.0248
-bus,133670,passenger bus,0.8313,0.0187
-bus,133670,city bus,0.0803,0.0198
-truck,175583,truck,0.1327,0.0286
-truck,175583,lorry,0.0117,0.0204
-truck,175583,cargo truck,0.8556,0.0208
-tanker,9256,tanker truck,0.6826,0.0153
-tanker,9256,fuel tanker,0.0104,0.0077
-tanker,9256,water tanker,0.3070,0.0120
-crane_truck,3569,crane truck,0.5349,0.0119
-crane_truck,3569,mobile crane,0.1429,0.0108
-crane_truck,3569,lifting crane,0.3222,0.0075
-street_cart,23512,street vendor cart,0.5769,0.0220
-street_cart,23512,food cart,0.0632,0.0189
-street_cart,23512,hand cart,0.3599,0.0233
-excavator,4254,excavator,0.0287,0.0104
-excavator,4254,digging machine,0.6716,0.0099
-excavator,4254,yellow excavator,0.0515,0.0075
-excavator,4254,construction excavator,0.2482,0.0105
+car,1146,car,0.3447,0.0317
+car,1146,hatchback,0.0672,0.0107
+car,1146,trunked rear silhouette,0.5742,0.0005
+car,1146,compact roof arc,0.0140,0.0000
+motorcycle,985,motorcycle,0.4406,0.0435
+motorcycle,985,underbone motorcycle,0.3421,0.0004
+motorcycle,985,round headlamp housing,0.0345,0.0000
+motorcycle,985,fuel tank saddle,0.1827,0.0001
+rider,620,rider,0.6581,0.0118
+rider,620,arms extended forward,0.2903,0.0004
+rider,620,mounted rider,0.0145,0.0031
+rider,620,seated human silhouette,0.0371,0.0015
+person,459,person,0.6362,0.0804
+person,459,shoulders above torso,0.2309,0.0001
+person,459,crossing pedestrian,0.1024,0.0020
+person,459,free standing silhouette,0.0305,0.0001
+autorickshaw,615,auto rickshaw,0.5675,0.0177
+autorickshaw,615,rear bench compartment,0.2650,0.0003
+autorickshaw,615,rounded front nose,0.1626,0.0000
+autorickshaw,615,arched roof canopy,0.0049,0.0000
+bicycle,6,bicycle,0.5000,0.1405
+bicycle,6,slender front fork,0.3333,0.0009
+bicycle,6,open triangle geometry,0.1667,0.0000
+bicycle,6,narrow saddle seat,0.0000,0.0000
+traffic_sign,27,traffic sign,0.6667,0.0264
+traffic_sign,27,geometric metal face,0.0370,0.0001
+traffic_sign,27,stop sign,0.0000,0.0003
+traffic_sign,27,numbered speed plate,0.2963,0.0005
+traffic_light,1,traffic light,1.0000,0.0642
+traffic_light,1,vertical lantern face,0.0000,0.0000
+traffic_light,1,hooded signal lenses,0.0000,0.0001
+traffic_light,1,signal box face,0.0000,0.0026
+bus,740,bus,0.2392,0.0285
+bus,740,row of windows,0.1635,0.0003
+bus,740,tall flat nose,0.0932,0.0000
+bus,740,high coach profile,0.5041,0.0006
+truck,785,truck,0.1541,0.0247
+truck,785,dump truck,0.6433,0.0158
+truck,785,tall rear tailgate,0.0306,0.0001
+truck,785,dual rear axle set,0.1720,0.0000
+tanker,248,tanker,0.3952,0.0098
+tanker,248,hazard label panel,0.0363,0.0000
+tanker,248,cylindrical tank body,0.0645,0.0006
+tanker,248,rear valve assembly,0.5040,0.0000
+crane_truck,138,crane truck,0.5000,0.0132
+crane_truck,138,boom tip pulley,0.3188,0.0008
+crane_truck,138,truck crane,0.1739,0.0072
+crane_truck,138,outrigger support legs,0.0072,0.0000
+street_cart,206,street cart,0.8932,0.0282
+street_cart,206,produce display tray,0.0243,0.0022
+street_cart,206,spoked cart axle,0.0777,0.0000
+street_cart,206,wooden side boards,0.0049,0.0001
+excavator,275,excavator,0.4145,0.0091
+excavator,275,articulated rear arm,0.4727,0.0000
+excavator,275,deep bucket teeth,0.1127,0.0000
+excavator,275,large rear tire,0.0000,0.0000

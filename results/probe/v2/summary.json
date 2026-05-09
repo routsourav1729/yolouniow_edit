@@ -2,9 +2,9 @@
   "experiment_tag": "v2",
   "config": "configs/test/idd_prompt_eval.yaml",
   "checkpoint": "work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_train_task2_10shot_seed1_wapr_kume/best_owod_Both_epoch_40.pth",
-  "num_images_processed": 21084,
+  "num_images_processed": 51,
   "iou_threshold": 0.5,
-  "split": "test",
+  "split": "train",
   "test_classes": [
     {
       "name": "car",
@@ -12,7 +12,10 @@
         "car"
       ],
       "prompts": [
-        "car"
+        "car",
+        "hatchback",
+        "trunked rear silhouette",
+        "compact roof arc"
       ]
     },
     {
@@ -22,8 +25,9 @@
       ],
       "prompts": [
         "motorcycle",
-        "motorbike",
-        "two wheeler"
+        "underbone motorcycle",
+        "round headlamp housing",
+        "fuel tank saddle"
       ]
     },
     {
@@ -33,8 +37,9 @@
       ],
       "prompts": [
         "rider",
-        "motorcyclist",
-        "driver"
+        "arms extended forward",
+        "mounted rider",
+        "seated human silhouette"
       ]
     },
     {
@@ -44,8 +49,9 @@
       ],
       "prompts": [
         "person",
-        "pedestrian",
-        "human"
+        "shoulders above torso",
+        "crossing pedestrian",
+        "free standing silhouette"
       ]
     },
     {
@@ -55,8 +61,9 @@
       ],
       "prompts": [
         "auto rickshaw",
-        "tuk tuk",
-        "three wheeler"
+        "rear bench compartment",
+        "rounded front nose",
+        "arched roof canopy"
       ]
     },
     {
@@ -66,7 +73,9 @@
       ],
       "prompts": [
         "bicycle",
-        "pedal bicycle"
+        "slender front fork",
+        "open triangle geometry",
+        "narrow saddle seat"
       ]
     },
     {
@@ -76,8 +85,9 @@
       ],
       "prompts": [
         "traffic sign",
-        "sign board",
-        "road traffic sign"
+        "geometric metal face",
+        "stop sign",
+        "numbered speed plate"
       ]
     },
     {
@@ -87,8 +97,9 @@
       ],
       "prompts": [
         "traffic light",
-        "traffic signal light",
-        "road signal lamp"
+        "vertical lantern face",
+        "hooded signal lenses",
+        "signal box face"
       ]
     },
     {
@@ -98,8 +109,9 @@
       ],
       "prompts": [
         "bus",
-        "passenger bus",
-        "city bus"
+        "row of windows",
+        "tall flat nose",
+        "high coach profile"
       ]
     },
     {
@@ -109,8 +121,9 @@
       ],
       "prompts": [
         "truck",
-        "lorry",
-        "cargo truck"
+        "dump truck",
+        "tall rear tailgate",
+        "dual rear axle set"
       ]
     },
     {
@@ -119,9 +132,10 @@
         "tanker_vehicle"
       ],
       "prompts": [
-        "tanker truck",
-        "fuel tanker",
-        "water tanker"
+        "tanker",
+        "hazard label panel",
+        "cylindrical tank body",
+        "rear valve assembly"
       ]
     },
     {
@@ -131,8 +145,9 @@
       ],
       "prompts": [
         "crane truck",
-        "mobile crane",
-        "lifting crane"
+        "boom tip pulley",
+        "truck crane",
+        "outrigger support legs"
       ]
     },
     {
@@ -141,9 +156,10 @@
         "street_cart"
       ],
       "prompts": [
-        "street vendor cart",
-        "food cart",
-        "hand cart"
+        "street cart",
+        "produce display tray",
+        "spoked cart axle",
+        "wooden side boards"
       ]
     },
     {
@@ -153,268 +169,285 @@
       ],
       "prompts": [
         "excavator",
-        "digging machine",
-        "yellow excavator",
-        "construction excavator"
+        "articulated rear arm",
+        "deep bucket teeth",
+        "large rear tire"
       ]
     }
   ],
   "gt_classes_seen": [
-    "animal",
     "autorickshaw",
     "bicycle",
     "bus",
     "car",
-    "concrete_mixer",
     "crane_truck",
     "excavator",
     "motorcycle",
     "person",
-    "pole",
-    "pull_cart",
     "rider",
-    "road_roller",
     "street_cart",
     "tanker_vehicle",
-    "tractor",
     "traffic light",
     "traffic sign",
     "truck"
   ],
   "counts_per_gt": {
-    "animal": 4753,
-    "autorickshaw": 165451,
-    "bicycle": 7950,
-    "bus": 133670,
-    "car": 470195,
-    "concrete_mixer": 2926,
-    "crane_truck": 3569,
-    "excavator": 4254,
-    "motorcycle": 391209,
-    "person": 132819,
-    "pole": 9610,
-    "pull_cart": 1740,
-    "rider": 225778,
-    "road_roller": 1142,
-    "street_cart": 23512,
-    "tanker_vehicle": 9256,
-    "tractor": 13034,
-    "traffic light": 5677,
-    "traffic sign": 47539,
-    "truck": 175583
+    "autorickshaw": 615,
+    "bicycle": 6,
+    "bus": 740,
+    "car": 1146,
+    "crane_truck": 138,
+    "excavator": 275,
+    "motorcycle": 985,
+    "person": 459,
+    "rider": 620,
+    "street_cart": 206,
+    "tanker_vehicle": 248,
+    "traffic light": 1,
+    "traffic sign": 27,
+    "truck": 785
   },
   "cross_class_winner_rate": {
-    "animal": null,
-    "autorickshaw": 0.13462596176511474,
-    "bicycle": 0.5392452830188679,
-    "bus": 0.5839979052891449,
-    "car": 0.38034219844957945,
-    "concrete_mixer": null,
-    "crane_truck": 0.5738302045390866,
-    "excavator": 0.0923836389280677,
-    "motorcycle": 0.783627166041681,
-    "person": 0.593296139859508,
-    "pole": null,
-    "pull_cart": null,
-    "rider": 0.3263294032190913,
-    "road_roller": null,
-    "street_cart": 0.6906260632868323,
-    "tanker_vehicle": 0.24859550561797752,
-    "tractor": null,
-    "traffic light": 0.8768715871058658,
-    "traffic sign": 0.7667178527104062,
-    "truck": 0.7032799302893789
+    "autorickshaw": 0.13170731707317074,
+    "bicycle": 0.5,
+    "bus": 0.4608108108108108,
+    "car": 0.3944153577661431,
+    "crane_truck": 0.7246376811594203,
+    "excavator": 0.04,
+    "motorcycle": 0.534010152284264,
+    "person": 0.6427015250544662,
+    "rider": 0.16774193548387098,
+    "street_cart": 0.6456310679611651,
+    "tanker_vehicle": 0.11290322580645161,
+    "traffic light": 1.0,
+    "traffic sign": 0.14814814814814814,
+    "truck": 0.6917197452229299
   },
   "cross_class_mean_margin": {
-    "animal": null,
-    "autorickshaw": -0.01224262174218893,
-    "bicycle": 0.025456372648477554,
-    "bus": 0.04654235020279884,
-    "car": 0.029856527224183083,
-    "concrete_mixer": null,
-    "crane_truck": -0.011598403565585613,
-    "excavator": 0.0021841947454959154,
-    "motorcycle": 0.09328582137823105,
-    "person": 0.10931428521871567,
-    "pole": null,
-    "pull_cart": null,
-    "rider": -0.04120543226599693,
-    "road_roller": null,
-    "street_cart": 0.03864792734384537,
-    "tanker_vehicle": -0.021277079358696938,
-    "tractor": null,
-    "traffic light": 0.10617700219154358,
-    "traffic sign": 0.038014303892850876,
-    "truck": 0.03516262769699097
+    "autorickshaw": -0.00523624662309885,
+    "bicycle": 0.13903160393238068,
+    "bus": 0.023811284452676773,
+    "car": 0.028642425313591957,
+    "crane_truck": 0.005526404362171888,
+    "excavator": -0.009392166510224342,
+    "motorcycle": 0.03412478044629097,
+    "person": 0.07429354637861252,
+    "rider": -0.050887059420347214,
+    "street_cart": 0.014287300407886505,
+    "tanker_vehicle": -0.019879760220646858,
+    "traffic light": 0.06287304311990738,
+    "traffic sign": 0.011676925234496593,
+    "truck": 0.015165136195719242
   },
   "within_class": {
-    "motorcycle": {
-      "N": 391209,
+    "car": {
+      "N": 1146,
       "winner_rate": {
-        "motorcycle": 0.3503370321234941,
-        "motorbike": 0.10385752884008292,
-        "two wheeler": 0.545805439036423
+        "car": 0.34467713787085513,
+        "hatchback": 0.06719022687609075,
+        "trunked rear silhouette": 0.5741710296684118,
+        "compact roof arc": 0.013961605584642234
       },
       "mean_score": {
-        "motorcycle": 0.05344562605023384,
-        "motorbike": 0.049111030995845795,
-        "two wheeler": 0.011020004749298096
+        "car": 0.03172546252608299,
+        "hatchback": 0.010664613917469978,
+        "trunked rear silhouette": 0.0004916320322081447,
+        "compact roof arc": 1.5765007219670224e-06
+      }
+    },
+    "motorcycle": {
+      "N": 985,
+      "winner_rate": {
+        "motorcycle": 0.44060913705583754,
+        "underbone motorcycle": 0.34213197969543147,
+        "round headlamp housing": 0.03451776649746193,
+        "fuel tank saddle": 0.18274111675126903
+      },
+      "mean_score": {
+        "motorcycle": 0.043540045619010925,
+        "underbone motorcycle": 0.00039630540413782,
+        "round headlamp housing": 1.8303542674402706e-05,
+        "fuel tank saddle": 0.000115849485155195
       }
     },
     "rider": {
-      "N": 225778,
+      "N": 620,
       "winner_rate": {
-        "rider": 0.1679525905978439,
-        "motorcyclist": 0.42536916794373236,
-        "driver": 0.40667824145842374
+        "rider": 0.6580645161290323,
+        "arms extended forward": 0.2903225806451613,
+        "mounted rider": 0.014516129032258065,
+        "seated human silhouette": 0.037096774193548385
       },
       "mean_score": {
-        "rider": 0.018264709040522575,
-        "motorcyclist": 0.03293792903423309,
-        "driver": 0.018408702686429024
+        "rider": 0.01178722269833088,
+        "arms extended forward": 0.00036321679363027215,
+        "mounted rider": 0.0030618731398135424,
+        "seated human silhouette": 0.0015286199050024152
       }
     },
     "person": {
-      "N": 132819,
+      "N": 459,
       "winner_rate": {
-        "person": 0.7969115864447105,
-        "pedestrian": 0.17756495682093676,
-        "human": 0.025523456734352766
+        "person": 0.6361655773420479,
+        "shoulders above torso": 0.23093681917211328,
+        "crossing pedestrian": 0.10239651416122005,
+        "free standing silhouette": 0.030501089324618737
       },
       "mean_score": {
-        "person": 0.08751733601093292,
-        "pedestrian": 0.012041816487908363,
-        "human": 0.0225902758538723
+        "person": 0.08036784827709198,
+        "shoulders above torso": 0.00011521759734023362,
+        "crossing pedestrian": 0.0020195026881992817,
+        "free standing silhouette": 0.00011108061880804598
       }
     },
     "autorickshaw": {
-      "N": 165451,
+      "N": 615,
       "winner_rate": {
-        "auto rickshaw": 0.28816386724770476,
-        "tuk tuk": 0.014463496745259926,
-        "three wheeler": 0.6973726360070354
+        "auto rickshaw": 0.567479674796748,
+        "rear bench compartment": 0.26504065040650404,
+        "rounded front nose": 0.16260162601626016,
+        "arched roof canopy": 0.004878048780487805
       },
       "mean_score": {
-        "auto rickshaw": 0.018518861383199692,
-        "tuk tuk": 0.007173289079219103,
-        "three wheeler": 0.016658395528793335
+        "auto rickshaw": 0.017666302621364594,
+        "rear bench compartment": 0.00026116854860447347,
+        "rounded front nose": 3.062719042645767e-05,
+        "arched roof canopy": 1.1173603525094222e-05
       }
     },
     "bicycle": {
-      "N": 7950,
+      "N": 6,
       "winner_rate": {
-        "bicycle": 0.4675471698113208,
-        "pedal bicycle": 0.5324528301886793
+        "bicycle": 0.5,
+        "slender front fork": 0.3333333333333333,
+        "open triangle geometry": 0.16666666666666666,
+        "narrow saddle seat": 0.0
       },
       "mean_score": {
-        "bicycle": 0.03930969908833504,
-        "pedal bicycle": 0.016005324199795723
+        "bicycle": 0.14048120379447937,
+        "slender front fork": 0.000926637789234519,
+        "open triangle geometry": 7.744799404463265e-06,
+        "narrow saddle seat": 1.6988656170724425e-06
       }
     },
     "traffic_sign": {
-      "N": 47539,
+      "N": 27,
       "winner_rate": {
-        "traffic sign": 0.3681188077157702,
-        "sign board": 0.225583205368224,
-        "road traffic sign": 0.4062979869160058
+        "traffic sign": 0.6666666666666666,
+        "geometric metal face": 0.037037037037037035,
+        "stop sign": 0.0,
+        "numbered speed plate": 0.2962962962962963
       },
       "mean_score": {
-        "traffic sign": 0.022329963743686676,
-        "sign board": 0.013674722984433174,
-        "road traffic sign": 0.009063098579645157
+        "traffic sign": 0.026371657848358154,
+        "geometric metal face": 7.833418931113556e-05,
+        "stop sign": 0.00026765812071971595,
+        "numbered speed plate": 0.000494841078761965
       }
     },
     "traffic_light": {
-      "N": 5677,
+      "N": 1,
       "winner_rate": {
-        "traffic light": 0.639598379425753,
-        "traffic signal light": 0.07380658798661265,
-        "road signal lamp": 0.2865950325876343
+        "traffic light": 1.0,
+        "vertical lantern face": 0.0,
+        "hooded signal lenses": 0.0,
+        "signal box face": 0.0
       },
       "mean_score": {
-        "traffic light": 0.0648651123046875,
-        "traffic signal light": 0.04136357456445694,
-        "road signal lamp": 0.013404075987637043
+        "traffic light": 0.06418264657258987,
+        "vertical lantern face": 3.734356869244948e-05,
+        "hooded signal lenses": 6.205049430718645e-05,
+        "signal box face": 0.0026112475898116827
       }
     },
     "bus": {
-      "N": 133670,
+      "N": 740,
       "winner_rate": {
-        "bus": 0.08838931697463903,
-        "passenger bus": 0.8312635595122316,
-        "city bus": 0.08034712351312935
+        "bus": 0.2391891891891892,
+        "row of windows": 0.1635135135135135,
+        "tall flat nose": 0.09324324324324325,
+        "high coach profile": 0.504054054054054
       },
       "mean_score": {
-        "bus": 0.024777844548225403,
-        "passenger bus": 0.01870582439005375,
-        "city bus": 0.019812332466244698
+        "bus": 0.028510207310318947,
+        "row of windows": 0.0002748170809354633,
+        "tall flat nose": 2.810250225593336e-05,
+        "high coach profile": 0.0006135475123301148
       }
     },
     "truck": {
-      "N": 175583,
+      "N": 785,
       "winner_rate": {
-        "truck": 0.1327406411782462,
-        "lorry": 0.011698171235256261,
-        "cargo truck": 0.8555611875864976
+        "truck": 0.15414012738853503,
+        "dump truck": 0.643312101910828,
+        "tall rear tailgate": 0.030573248407643312,
+        "dual rear axle set": 0.17197452229299362
       },
       "mean_score": {
-        "truck": 0.028638944029808044,
-        "lorry": 0.02035885863006115,
-        "cargo truck": 0.020800204947590828
+        "truck": 0.024703141301870346,
+        "dump truck": 0.015810441225767136,
+        "tall rear tailgate": 7.73778447182849e-05,
+        "dual rear axle set": 2.858818697859533e-05
       }
     },
     "tanker": {
-      "N": 9256,
+      "N": 248,
       "winner_rate": {
-        "tanker truck": 0.6825842696629213,
-        "fuel tanker": 0.010371650821089023,
-        "water tanker": 0.3070440795159896
+        "tanker": 0.3951612903225806,
+        "hazard label panel": 0.036290322580645164,
+        "cylindrical tank body": 0.06451612903225806,
+        "rear valve assembly": 0.5040322580645161
       },
       "mean_score": {
-        "tanker truck": 0.015332636423408985,
-        "fuel tanker": 0.007690140977501869,
-        "water tanker": 0.012012154795229435
+        "tanker": 0.009814762510359287,
+        "hazard label panel": 2.5372099116793834e-05,
+        "cylindrical tank body": 0.0005883314879611135,
+        "rear valve assembly": 1.30870967041119e-05
       }
     },
     "crane_truck": {
-      "N": 3569,
+      "N": 138,
       "winner_rate": {
-        "crane truck": 0.5348837209302325,
-        "mobile crane": 0.14289717007565145,
-        "lifting crane": 0.322219108994116
+        "crane truck": 0.5,
+        "boom tip pulley": 0.3188405797101449,
+        "truck crane": 0.17391304347826086,
+        "outrigger support legs": 0.007246376811594203
       },
       "mean_score": {
-        "crane truck": 0.011897088028490543,
-        "mobile crane": 0.010800437070429325,
-        "lifting crane": 0.007465043105185032
+        "crane truck": 0.01322280615568161,
+        "boom tip pulley": 0.0007997670327313244,
+        "truck crane": 0.007219529710710049,
+        "outrigger support legs": 4.256589363649255e-06
       }
     },
     "street_cart": {
-      "N": 23512,
+      "N": 206,
       "winner_rate": {
-        "street vendor cart": 0.5768969037087445,
-        "food cart": 0.06320176930928888,
-        "hand cart": 0.35990132698196664
+        "street cart": 0.8932038834951457,
+        "produce display tray": 0.024271844660194174,
+        "spoked cart axle": 0.07766990291262135,
+        "wooden side boards": 0.0048543689320388345
       },
       "mean_score": {
-        "street vendor cart": 0.0219778660684824,
-        "food cart": 0.01890103705227375,
-        "hand cart": 0.02334311231970787
+        "street cart": 0.028229139745235443,
+        "produce display tray": 0.002160061849281192,
+        "spoked cart axle": 3.454845500527881e-05,
+        "wooden side boards": 9.14641423150897e-05
       }
     },
     "excavator": {
-      "N": 4254,
+      "N": 275,
       "winner_rate": {
-        "excavator": 0.028678890456041373,
-        "digging machine": 0.6716031969910672,
-        "yellow excavator": 0.05148095909732017,
-        "construction excavator": 0.24823695345557123
+        "excavator": 0.41454545454545455,
+        "articulated rear arm": 0.4727272727272727,
+        "deep bucket teeth": 0.11272727272727273,
+        "large rear tire": 0.0
       },
       "mean_score": {
-        "excavator": 0.010423720814287663,
-        "digging machine": 0.009937440976500511,
-        "yellow excavator": 0.007484321482479572,
-        "construction excavator": 0.010533020831644535
+        "excavator": 0.009139899164438248,
+        "articulated rear arm": 1.0639320862537716e-05,
+        "deep bucket teeth": 3.2874569910745777e-07,
+        "large rear tire": 1.6908787756619859e-06
       }
     }
   }

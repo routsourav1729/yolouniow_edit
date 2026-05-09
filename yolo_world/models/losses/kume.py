@@ -1,21 +1,19 @@
-"""Known-Unknown Margin Enforcement (KUME) for YOLO-UniOW.
+"""Known-Unknown Margin Enforcement (KUME) — k-vs-k single-term variant.
 
-Adds explicit inter-channel separation between the correct-class logit
-and the competing unknown/known logit at each anchor location.
+This is the k-vs-k ablation: a single all-pairs margin hinge between the
+correct-known logit and every other known logit at GT-matched anchors.
 
-BCE trains each channel independently — it never enforces that at a given
-anchor, the correct channel beats the incorrect channel by a margin.
-KUME fills this structural gap with a hinge-based margin loss operating
-in the calibrated logit space (post-BN, post-scale, post-bias).
+For a known-class anchor a with correct class c:
+    L_kvk(a) = mean_{j != c, j in [0, K)} ReLU(l_j(a) - l_c(a) + m)
 
-For GT-matched known-class anchors:
-    L_known(a) = ReLU(l_unk(a) - l_k(a) + m)
-    Push T_unk's logit at least m below the correct class logit.
+T_unk and T_anchor are excluded from the comparison set. The unknown-side
+hinge and the original known-vs-T_unk hinge are removed in this variant.
+WAPR weights and the unknown_mask are accepted in the signature but ignored,
+so call-site compatibility is preserved.
 
-For gatekeeper-assigned unknown anchors:
-    L_unk(a) = w_r(a) * ReLU(max_k l_k(a) - l_unk(a) + m)
-    Push T_unk's logit at least m above the best known-class logit.
-    Weighted by WAPR's w_r so contaminated pseudo-labels contribute less.
+Rationale: probe diagnostics show BCE provides no inter-known coupling, so
+correct vs other-known logits are not separated. This term targets that
+gap directly.
 """
 
 import torch
@@ -23,12 +21,12 @@ import torch.nn.functional as F
 
 
 class KUMEModule:
-    """Known-Unknown Margin Enforcement.
+    """KUME k-vs-k margin loss.
 
     Args:
         num_known_classes (int): Total known classes (base + novel).
         unk_idx (int): Absolute index of T_unk in the logit tensor.
-            For a K+2 tensor (known + T_unk + T_anchor), unk_idx = K.
+            Kept for signature compatibility; not used in this variant.
         margin (float): Required logit separation. Default 1.0.
         weight (float): Loss weight scalar. Default 0.5.
     """
@@ -49,69 +47,42 @@ class KUMEModule:
                 fg_mask: torch.Tensor,
                 unknown_mask: torch.Tensor = None,
                 wapr_w_r: torch.Tensor = None) -> torch.Tensor:
-        """Compute KUME margin loss.
+        """Compute k-vs-k margin loss.
 
-        Args:
-            cls_logits: (B, N, K) raw logits from BNContrastiveHead (pre-sigmoid,
-                WITH gradient). K includes known classes + T_unk + T_anchor.
-            assigned_labels: (B, N) long tensor. Argmax of assigned_scores from
-                TAL. Values 0..num_known-1 for GT-matched, arbitrary for bg.
-            fg_mask: (B, N) bool — fg_mask_pre_prior from TAL assignment.
-            unknown_mask: (B, N) bool — gatekeeper mask. None during warmup.
-            wapr_w_r: (B, N) float — WAPR redistribution weights. If provided,
-                weight the unknown-side margin by w_r.
-
-        Returns:
-            Scalar loss tensor (weighted).
+        unknown_mask and wapr_w_r are accepted for call-site compatibility
+        but ignored in the kvk variant.
         """
-        # --- Known-side margin ---
-        # Only at GT-matched anchors with known class labels
-        known_mask = fg_mask & (assigned_labels < self.num_known_classes)  # (B, N)
+        K = self.num_known_classes
+        known_mask = fg_mask & (assigned_labels < K)  # (B, N)
 
-        if known_mask.any():
-            known_labels = assigned_labels[known_mask]  # (M,)
-            known_logits = cls_logits[known_mask]  # (M, K)
-            l_correct = known_logits.gather(
-                1, known_labels.unsqueeze(1)).squeeze(1)  # (M,)
-            l_unk = known_logits[:, self.unk_idx]  # (M,)
-            margin_known = F.relu(l_unk - l_correct + self.margin)  # (M,)
-            num_known_violations = int((margin_known > 0).sum().item())
-            num_known_anchors = int(known_mask.sum().item())
-            loss_known = margin_known.mean()
-        else:
-            loss_known = cls_logits.new_zeros(1).squeeze()
-            num_known_violations = 0
-            num_known_anchors = 0
+        if not known_mask.any() or K < 2:
+            zero = cls_logits.new_zeros(()).requires_grad_(False)
+            print(f"[KUME-KVK] num_known_anchors=0 loss_kvk=0.0000 "
+                  f"num_violations=0 mean_violation_per_anchor=0.0000")
+            return self.weight * zero
 
-        # --- Unknown-side margin ---
-        if unknown_mask is not None and unknown_mask.any():
-            unk_logits = cls_logits[unknown_mask]  # (P, K)
-            l_unk_at_unk = unk_logits[:, self.unk_idx]  # (P,)
-            l_max_known = unk_logits[
-                :, :self.num_known_classes].max(dim=1).values  # (P,)
-            margin_unk = F.relu(
-                l_max_known - l_unk_at_unk + self.margin)  # (P,)
+        labels = assigned_labels[known_mask]                       # (M,)
+        logits = cls_logits[known_mask]                            # (M, K_total)
+        known_logits = logits[:, :K]                               # (M, K)
+        l_correct = known_logits.gather(
+            1, labels.unsqueeze(1)).squeeze(1)                     # (M,)
 
-            if wapr_w_r is not None:
-                w_r_at_unk = wapr_w_r[unknown_mask]  # (P,)
-                margin_unk = margin_unk * w_r_at_unk
+        diff = known_logits - l_correct.unsqueeze(1) + self.margin  # (M, K)
+        idx = torch.arange(K, device=diff.device).unsqueeze(0)      # (1, K)
+        non_correct_mask = (idx != labels.unsqueeze(1))             # (M, K)
+        hinge = F.relu(diff) * non_correct_mask.float()             # (M, K)
 
-            num_unk_violations = int((margin_unk > 0).sum().item())
-            num_unk_anchors = int(unknown_mask.sum().item())
-            loss_unk = margin_unk.mean()
-        else:
-            loss_unk = cls_logits.new_zeros(1).squeeze()
-            num_unk_violations = 0
-            num_unk_anchors = 0
+        loss_per_anchor = hinge.sum(dim=1) / (K - 1)                # (M,)
+        loss_kvk = loss_per_anchor.mean()
 
-        total_loss = self.weight * (loss_known + loss_unk) / 2.0
+        num_known_anchors = int(known_mask.sum().item())
+        num_violations = int((hinge > 0).sum().item())
+        mean_violation_per_anchor = (num_violations /
+                                     max(num_known_anchors, 1))
 
-        # Diagnostic
-        print(f"[KUME] known_anchors={num_known_anchors} "
-              f"unk_anchors={num_unk_anchors} "
-              f"loss_known={loss_known.item():.4f} "
-              f"loss_unk={loss_unk.item():.4f} "
-              f"margin_violations_known={num_known_violations}/{num_known_anchors} "
-              f"margin_violations_unk={num_unk_violations}/{num_unk_anchors}")
+        print(f"[KUME-KVK] num_known_anchors={num_known_anchors} "
+              f"loss_kvk={loss_kvk.item():.4f} "
+              f"num_violations={num_violations} "
+              f"mean_violation_per_anchor={mean_violation_per_anchor:.4f}")
 
-        return total_loss
+        return self.weight * loss_kvk

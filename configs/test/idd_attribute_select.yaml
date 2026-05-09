@@ -1,0 +1,64 @@
+# Discriminative Attribute Selection — IDD
+# Selection-only stage: forward K-shot training images through frozen baseline
+# (no KUME, no WAPR), build per-class support pools at IoU thresholds {0.7,0.8,0.9},
+# score 30 candidates + default name per class via cosine sim, then KDE-JS
+# discrimination with min-over-r aggregation. See tools/select_attributes.py.
+
+experiment_tag: idd_v1
+dataset_key:    idd
+
+# ── Model + checkpoints ──────────────────────────────────────────────────────
+# Baseline T2 checkpoint per spec (no KUME, no WAPR).
+model_config: configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2.py
+checkpoint:   work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_train_task2_10shot_seed1/best_owod_Both_epoch_40.pth
+
+text_encoder_pretrain_ckpt: pretrained/yolo_uniow_l_lora_bn_5e-4_100e_8gpus_obj365v1_goldg_train_lvis_minival.pth
+text_encoder_model_name:    openai/clip-vit-base-patch32
+text_encoder_use_lora:      true
+
+# ── Inputs ────────────────────────────────────────────────────────────────────
+attributes_json: data/attributes/idd/idd_attribute.json
+out_dir:         results/attributes/idd
+
+# ── Data (10-shot training split) ────────────────────────────────────────────
+split:         train          # standard T2 dataloader → 10-shot support
+num_images:    0              # 0 = all
+iou_thresholds: [0.7, 0.8, 0.9]
+
+# ── Inference perf ───────────────────────────────────────────────────────────
+batch_size:   8
+num_workers:  8
+amp:          true
+
+# ── Selection hyperparams ────────────────────────────────────────────────────
+top_k:           [3, 5]
+lambda_div:      [0.5, 0.7, 0.9]
+primary_iou:     0.8
+low_n_threshold: 20
+
+# Reliable support set: read box_<fewshot_k>shot_<class>_train.txt for ALL
+# classes, cap to `select_k` reliable GT boxes per class. Other classes' boxes
+# in those images are NOT reliable for those other classes (incidental).
+fewshot_k:       10
+select_k:        10
+dataset_name:    IDD
+dataset_root:    data/OWOD
+
+# ── Class table: JSON-key → gt_alias (must match VOC annotation strings) ─────
+# `name` MUST equal the key in attributes_json. `default` is the bare class
+# string used as the baseline against which attributes must improve.
+classes:
+  - { name: car,            default: car,             gt_alias: [car] }
+  - { name: motorcycle,     default: motorcycle,      gt_alias: [motorcycle] }
+  - { name: rider,          default: rider,           gt_alias: [rider] }
+  - { name: person,         default: person,          gt_alias: [person] }
+  - { name: autorickshaw,   default: auto rickshaw,   gt_alias: [autorickshaw] }
+  - { name: bicycle,        default: bicycle,         gt_alias: [bicycle] }
+  - { name: traffic sign,   default: traffic sign,    gt_alias: ["traffic sign"] }
+  - { name: traffic light,  default: traffic light,   gt_alias: ["traffic light"] }
+  - { name: bus,            default: bus,             gt_alias: [bus] }
+  - { name: truck,          default: truck,           gt_alias: [truck] }
+  - { name: tanker_vehicle, default: tanker,          gt_alias: [tanker_vehicle] }
+  - { name: crane_truck,    default: crane truck,     gt_alias: [crane_truck] }
+  - { name: street_cart,    default: street cart,     gt_alias: [street_cart] }
+  - { name: excavator,      default: excavator,       gt_alias: [excavator] }

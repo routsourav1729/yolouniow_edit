@@ -17,6 +17,7 @@ from mmyolo.registry import MODELS
 
 from mmyolo.models.dense_heads import YOLOv10HeadModule, YOLOv10Head
 from .yolo_world_head import ContrastiveHead, BNContrastiveHead
+from .visual_cache import VisualCache
 
 
 @MODELS.register_module()
@@ -35,6 +36,8 @@ class YOLOv10WorldHeadModule(YOLOv10HeadModule):
                  use_einsum: bool = True,
                  freeze_one2one: bool = False,
                  freeze_one2many: bool = False,
+                 visual_cache_cfg: Optional[dict] = None,
+                 visual_alpha: float = 1.0,
                  **kwargs) -> None:
         self.embed_dims = embed_dims
         self.use_bn_head = use_bn_head
@@ -42,6 +45,19 @@ class YOLOv10WorldHeadModule(YOLOv10HeadModule):
         self.freeze_one2one = freeze_one2one
         self.freeze_one2many = freeze_one2many
         super().__init__(*args, **kwargs)
+
+        # Visual K-shot cache for novel-class logit fusion at inference.
+        if visual_cache_cfg is not None:
+            self.visual_cache = VisualCache(
+                n_base=visual_cache_cfg['n_base'],
+                n_novel=visual_cache_cfg['n_novel'],
+                embed_dim=embed_dims,
+                reduce=visual_cache_cfg.get('reduce', 'mean'),
+                topk=visual_cache_cfg.get('topk', 3))
+            self.visual_alpha = float(visual_alpha)
+        else:
+            self.visual_cache = None
+            self.visual_alpha = 0.0
 
     def init_weights(self, prior_prob=0.01):
         """Initialize the weight and bias of PPYOLOE head."""
@@ -340,6 +356,19 @@ class YOLOv10WorldHeadModule(YOLOv10HeadModule):
         if self.training:
             self._cached_cls_logits_one2one.append(cls_logit.detach())
             self._cached_cls_embeds_one2one.append(cls_contrast.norm(cls_embed).detach())
+        else:
+            vc = self.visual_cache
+            if vc is not None and vc.has_cache and self.visual_alpha != 0.0:
+                # Same BN-normalized space the text branch consumes inside
+                # cls_contrast.forward — guarantees feature-space match with cache.
+                bn_embed = cls_contrast.norm(cls_embed)
+                visual_cos = vc(bn_embed)                        # (B,n_novel,h,w)
+                scale = cls_contrast.logit_scale.exp()
+                bias = cls_contrast.bias
+                visual_logit = scale * visual_cos + bias
+                novel = slice(vc.n_base, vc.n_base + vc.n_novel)
+                cls_logit[:, novel] = (
+                    cls_logit[:, novel] + self.visual_alpha * visual_logit)
 
         # cls_logit[:, self.num_classes-1:self.num_classes] = torch.amax(cls_logit[:, self.num_classes-1:], dim=1, keepdim=True)
         # cls_logit = cls_logit[:, :self.num_classes]
