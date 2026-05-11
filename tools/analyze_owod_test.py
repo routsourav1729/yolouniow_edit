@@ -76,6 +76,8 @@ def parse_args():
     p.add_argument('--num-images', type=int, default=0, help='0 = all test images.')
     p.add_argument('--conf-thr', type=float, default=0.05)
     p.add_argument('--batch-size', type=int, default=64)
+    p.add_argument('--min-gt-warning', type=int, default=100,
+                   help='Warn when a GT class has fewer non-difficult boxes.')
     return p.parse_args()
 
 
@@ -475,7 +477,7 @@ _n_imgs_total   = 0
 
 # ── Result saving ─────────────────────────────────────────────────────────────
 
-def save_run_results(accum, ctx, out_dir, conf_thr):
+def save_run_results(accum, ctx, out_dir, conf_thr, min_gt_warning=100):
     os.makedirs(out_dir, exist_ok=True)
 
     all_class_names   = ctx['all_class_names']
@@ -514,6 +516,31 @@ def save_run_results(accum, ctx, out_dir, conf_thr):
         top   = sorted(confusion[gt_cls].items(), key=lambda x: -x[1])[:5]
         print(f'  {gt_cls:30s} ({role:7s}) N={total:6d}  '
               + ', '.join(f'{c}:{n}' for c, n in top))
+
+    low_support = [
+        (gt_cls, class_role(gt_cls, base_set, novel_set), gt_counts[gt_cls])
+        for gt_cls in all_gt_cls
+        if gt_counts[gt_cls] < min_gt_warning
+    ]
+    if low_support:
+        print(f'\n[{ctx["label"]}] LOW-GT SUPPORT WARNING '
+              f'(N < {min_gt_warning}; per-class AP/confusion is unstable)')
+        for gt_cls, role, n in low_support:
+            print(f'  {gt_cls:30s} ({role:7s}) N={n:6d}')
+
+    # gt_support.csv: quick audit trail for class support in this exact split.
+    support_path = os.path.join(out_dir, 'gt_support.csv')
+    with open(support_path, 'w', newline='') as f:
+        w = csv.writer(f)
+        w.writerow(['gt_class', 'role', 'non_difficult_gt', 'all_gt'])
+        for gt_cls in all_gt_cls:
+            w.writerow([
+                gt_cls,
+                class_role(gt_cls, base_set, novel_set),
+                gt_counts[gt_cls],
+                gt_counts_all.get(gt_cls, gt_counts[gt_cls]),
+            ])
+    print(f'[write] {support_path}')
 
     # confusion_matrix.csv
     csv_path = os.path.join(out_dir, 'confusion_matrix.csv')
@@ -727,6 +754,11 @@ def save_run_results(accum, ctx, out_dir, conf_thr):
         'model_label_names': model_label_names,
         'gt_counts':     dict(gt_counts),
         'gt_counts_all': dict(gt_counts_all),
+        'low_support_warning_threshold': min_gt_warning,
+        'low_support_classes': [
+            {'class': c, 'role': r, 'non_difficult_gt': n}
+            for c, r, n in low_support
+        ],
         'confusion':     {k: dict(v) for k, v in confusion.items()},
         'false_positives': dict(false_pos_by_cls),
         'per_class_metrics': pc_summary,
@@ -890,7 +922,8 @@ def main():
     print('=' * 80)
     for ctx, accum in zip(ctxs, accums):
         print(f'\n── [{ctx["label"]}]  →  {ctx["out_dir"]}')
-        save_run_results(accum, ctx, ctx['out_dir'], args.conf_thr)
+        save_run_results(
+            accum, ctx, ctx['out_dir'], args.conf_thr, args.min_gt_warning)
 
     print('\n' + '=' * 80)
     print('ALL ANALYSES COMPLETE')

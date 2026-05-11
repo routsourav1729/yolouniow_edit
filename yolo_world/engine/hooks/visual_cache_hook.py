@@ -26,12 +26,12 @@ class VisualCacheLoadHook(Hook):
                 'VisualCacheLoadHook: head_module.visual_cache is None — '
                 'set visual_cache_cfg in head_module config.')
         ckpt = torch.load(self.cache_path, map_location='cpu')
-        hm.visual_cache.load_cache(ckpt['cache'])
         device = next(model.parameters()).device
         hm.visual_cache.to(device)
+        hm.visual_cache.load_cache(ckpt['cache_per_level'])
         runner.logger.info(
             f'[VisualCache] {self.cache_path}  '
-            f'matched_per_class={ckpt["matched_per_class"]}  '
+            f'matched={ckpt["matched_per_class_per_level"]}  '
             f'alpha={hm.visual_alpha}  reduce={hm.visual_cache.reduce}')
         self._loaded = True
 

@@ -31,8 +31,7 @@ class OWODDetector(YOLODetector):
                  freeze_prompt: bool = False,
                  use_mlp_adapter: bool = False,
                  wapr: dict = None,
-                 gadl: dict = None,
-                 kume: dict = None,
+                 hardneg: dict = None,
                  **kwargs) -> None:
         self.mm_neck = mm_neck
         self.num_training_classes = num_train_classes
@@ -104,40 +103,25 @@ class OWODDetector(YOLODetector):
                   f"anchor_weight={self.wapr.anchor_loss_weight}, "
                   f"ratio_threshold={self.wapr.ratio_threshold}")
 
-        # GADL: GT-Anchored Discriminative Loss (T2 only)
-        self.gadl = None
-        if gadl is not None:
-            from yolo_world.models.losses.gadl import GADLModule
-            self.gadl = GADLModule(
-                num_prev=self.num_prev_classes,
-                num_known=num_train_classes - 2,
-                unk_idx=num_train_classes - 2,
-                weight=gadl.get('weight', 1.0),
-            )
-            self.bbox_head.gadl = self.gadl
-            print(f"[GADL] Initialized: num_prev={self.gadl.num_prev}, "
-                  f"num_known={self.gadl.num_known}, "
-                  f"unk_idx={self.gadl.unk_idx}, "
-                  f"weight={self.gadl.weight}")
-
-        # KUME: Known-Unknown Margin Enforcement (T2 only)
-        self.kume = None
-        if kume is not None:
-            from yolo_world.models.losses.kume import KUMEModule
-            self.kume = KUMEModule(
-                num_known_classes=kume.get(
+        # HardNeg: Contrastive hard-negative loss using T1-cached base-positive
+        # features that scored high on T_unk. Pushes T_unk and novel prompts
+        # DOWN on those features. T2 only.
+        self.hardneg = None
+        if hardneg is not None:
+            from yolo_world.models.losses.hardneg_contrastive import (
+                HardNegativeContrastiveLoss)
+            self.hardneg = HardNegativeContrastiveLoss(
+                cache_path=hardneg['cache_path'],
+                num_base_classes=hardneg.get(
+                    'num_base_classes', self.num_prev_classes),
+                num_known_classes=hardneg.get(
                     'num_known_classes', num_train_classes - 2),
-                unk_idx=kume.get('unk_idx', num_train_classes - 2),
-                margin=kume.get('margin', 1.0),
-                weight=kume.get('weight', 0.5),
+                unk_idx=hardneg.get('unk_idx', num_train_classes - 2),
+                target_unk=hardneg.get('target_unk', True),
+                target_novel=hardneg.get('target_novel', True),
+                weight=hardneg.get('weight', 1.0),
             )
-            self.bbox_head._kume = self.kume
-            print(f"[KUME] Initialized: num_known={self.kume.num_known_classes}, "
-                  f"unk_idx={self.kume.unk_idx}, "
-                  f"margin={self.kume.margin}, "
-                  f"weight={self.kume.weight}")
-
-
+            print(f'[HardNeg] {self.hardneg.summary()}')
 
     def update_embeddings(self, embeddings):
         # update embeddings when loading from checkpoint
@@ -164,15 +148,14 @@ class OWODDetector(YOLODetector):
             self.wapr.set_t_unk_anchor(self.embeddings[-2])
             print(f"[WAPR] T_unk anchor snapshot saved (norm={self.embeddings[-2].norm().item():.4f})")
 
-        # WAPR / GADL: set warmup flag on head (skip gatekeeper and GADL during warmup)
-        if self.wapr is not None or self.gadl is not None:
+        # WAPR: set warmup flag on head (skip gatekeeper during warmup)
+        if self.wapr is not None:
             from mmengine.logging import MessageHub
             try:
                 epoch = MessageHub.get_current_instance().get_info('epoch')
             except (KeyError, RuntimeError):
                 epoch = 0
-            warmup_epochs = self.wapr.warmup_epochs if self.wapr is not None else 0
-            self.bbox_head._wapr_in_warmup = (epoch < warmup_epochs)
+            self.bbox_head._wapr_in_warmup = (epoch < self.wapr.warmup_epochs)
 
         losses = self.bbox_head.loss(img_feats, txt_feats,
                                         batch_data_samples)
@@ -210,16 +193,14 @@ class OWODDetector(YOLODetector):
                 hub.update_scalar('wapr/warmup_active',
                                   1.0 if warmup else 0.0)
 
-        # GADL: GT-Anchored Discriminative Loss at novel GT anchor locations
-        if self.gadl is not None:
-            gadl_cls_logits = getattr(self.bbox_head, '_gadl_cls_logits', None)
-            gadl_assigned_labels = getattr(self.bbox_head, '_gadl_assigned_labels', None)
-            if gadl_cls_logits is not None and gadl_assigned_labels is not None:
-                gadl_loss = self.gadl.compute(gadl_cls_logits, gadl_assigned_labels)
-                losses['gadl_loss'] = gadl_loss
-            else:
-                # warmup epoch or first step before caching — skip silently
-                pass
+        # HardNeg: contrastive hard-negative loss on T1-cached base-positive
+        # features. Pushes T_unk + novel prompts DOWN on those features so
+        # they don't fire on base objects at T2 inference.
+        if self.hardneg is not None:
+            hn_loss = self.hardneg.compute(
+                self.embeddings,
+                self.bbox_head.head_module.one2one_cls_contrasts)
+            losses['hardneg_loss'] = hn_loss
 
         return losses
 

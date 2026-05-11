@@ -71,6 +71,16 @@ def extract_task_embedding(model, dataset, task, save_dir):
 
 
 @torch.inference_mode()
+def extract_custom_embedding(model, class_names, save_dir, save_name):
+    """Extract embeddings for an explicit ordered prompt list."""
+    print(f"  Custom: {len(class_names)} prompts -> {class_names}")
+    text_feats = model.backbone.forward_text([class_names]).squeeze(0).detach().cpu()
+    save_path = save_dir / save_name
+    np.save(save_path, text_feats.numpy())
+    print(f"  Saved: {save_path}  shape={text_feats.shape}")
+
+
+@torch.inference_mode()
 def extract_wildcard_embedding(model, save_dir, wildcard='object'):
     """Generate wildcard ('object') embedding via model backbone."""
     save_path = save_dir / f"{wildcard.replace(' ', '_')}.npy"
@@ -103,6 +113,11 @@ def main():
                         help="Task number (1, 2, ...). 0 = all tasks (default)")
     parser.add_argument("--wildcard", type=str, default="object",
                         help="Wildcard text for unknown/anchor embedding")
+    parser.add_argument("--class-names", type=str, default="",
+                        help="Comma-separated ordered prompt names. If set, "
+                             "extract exactly these prompts instead of t{task}_known.txt.")
+    parser.add_argument("--save-name", type=str, default="",
+                        help="Output .npy filename for --class-names, e.g. idd_t2_altveh.npy")
     parser.add_argument("--extract_tuned", action="store_true",
                         help="Extract tuned embedding from trained model state_dict")
     args = parser.parse_args()
@@ -130,13 +145,18 @@ def main():
         model.eval()
         print(f"  Model loaded from: {args.ckpt} on {device}")
 
-        # Extract wildcard embedding
-        extract_wildcard_embedding(model, save_dir, wildcard=args.wildcard)
+        if args.class_names:
+            class_names = [x.strip() for x in args.class_names.split(',') if x.strip()]
+            save_name = args.save_name or f"{args.dataset.lower()}_custom.npy"
+            extract_custom_embedding(model, class_names, save_dir, save_name)
+        else:
+            # Extract wildcard embedding
+            extract_wildcard_embedding(model, save_dir, wildcard=args.wildcard)
 
-        # Extract class embeddings for requested tasks
-        tasks = [args.task] if args.task > 0 else DATASET_TASKS.get(args.dataset, [1, 2])
-        for task in tasks:
-            extract_task_embedding(model, args.dataset, task, save_dir)
+            # Extract class embeddings for requested tasks
+            tasks = [args.task] if args.task > 0 else DATASET_TASKS.get(args.dataset, [1, 2])
+            for task in tasks:
+                extract_task_embedding(model, args.dataset, task, save_dir)
 
     print("Done!")
 

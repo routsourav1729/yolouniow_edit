@@ -12,6 +12,10 @@ model = dict(
             visual_cache_cfg=visual_cache_cfg,
             visual_alpha=visual_alpha)))
 
+# Increase test batch_size so CuDNN benchmark picks fast algorithms
+# (batch_size=1 cold-start selects ~15x slower convolution kernels).
+test_dataloader = dict(batch_size=8)
+
 custom_hooks = [
     *_base_.custom_hooks,
     dict(type='VisualCacheLoadHook',

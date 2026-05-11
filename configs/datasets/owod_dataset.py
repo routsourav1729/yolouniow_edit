@@ -50,6 +50,7 @@ analyze = {{'$ANALYZE:0'}}                                                      
 fewshot_k = {{'$FEWSHOT_K:0'}}                                                    # k-shot (0 = disabled, 10 = 10-shot, etc.)
 fewshot_seed = {{'$FEWSHOT_SEED:1'}}                                              # seed directory index
 fewshot_dir = '{{$FEWSHOT_DIR:data/OWOD/none}}'                                   # path to fewshot split dir (e.g. data/OWOD/iddsplit)
+fewshot_scope = '{{$FEWSHOT_SCOPE:novel}}'                                        # novel or all_known
 
 class_text_path = f"{owod_root}/ImageSets/{owod_dataset}/t{owod_task}_known.txt"  # text inputs path for open-vocabulary model 
 test_image_set = owod_settings[owod_dataset]['test_image_set']                    # owod test image set
@@ -80,6 +81,7 @@ owod_train_dataset = dict(
         fewshot_dir=fewshot_dir,
         fewshot_k=fewshot_k,
         fewshot_seed=fewshot_seed,
+        fewshot_scope=fewshot_scope,
         filter_cfg=dict(filter_empty_gt=False, min_size=32)),
     class_text_path=class_text_path,)
 

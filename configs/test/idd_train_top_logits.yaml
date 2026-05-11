@@ -1,0 +1,34 @@
+# IDD few-shot train probe: per-GT-box top logits from tuned T2 prompts.
+
+experiment_tag: idd_train_tuned_prompt_top_logits
+
+model_config: configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2.py
+checkpoint: work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_train_task2_10shot_seed1/best_owod_Both_epoch_20.pth
+
+text_encoder_pretrain_ckpt: pretrained/yolo_uniow_l_lora_bn_5e-4_100e_8gpus_obj365v1_goldg_train_lvis_minival.pth
+text_encoder_model_name: openai/clip-vit-base-patch32
+text_encoder_use_lora: true
+
+split: train
+num_images: 0
+iou_threshold: 0.0
+
+batch_size: 8
+num_workers: 8
+amp: true
+
+test_classes:
+  - { name: car,           prompts: "car",            gt_alias: [car] }
+  - { name: motorcycle,    prompts: "motorcycle",     gt_alias: [motorcycle] }
+  - { name: rider,         prompts: "rider",          gt_alias: [rider] }
+  - { name: person,        prompts: "person",         gt_alias: [person] }
+  - { name: autorickshaw,  prompts: "autorickshaw",   gt_alias: [autorickshaw] }
+  - { name: bicycle,       prompts: "bicycle",        gt_alias: [bicycle] }
+  - { name: traffic_sign,  prompts: "traffic sign",   gt_alias: ["traffic sign"] }
+  - { name: traffic_light, prompts: "traffic light",  gt_alias: ["traffic light"] }
+  - { name: bus,           prompts: "bus",            gt_alias: [bus] }
+  - { name: truck,         prompts: "truck",          gt_alias: [truck] }
+  - { name: tanker,        prompts: "tanker vehicle", gt_alias: [tanker_vehicle] }
+  - { name: crane_truck,   prompts: "crane truck",    gt_alias: [crane_truck] }
+  - { name: street_cart,   prompts: "street cart",    gt_alias: [street_cart] }
+  - { name: excavator,     prompts: "excavator",      gt_alias: [excavator] }

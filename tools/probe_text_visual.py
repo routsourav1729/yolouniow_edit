@@ -56,9 +56,20 @@ def parse_args():
     g.add_argument('--dataset', choices=list(DATASET_CONFIGS),
                    help='Shorthand dataset name (selects default config)')
     p.add_argument('--out-dir', default=None)
+    p.add_argument('--checkpoint', default=None,
+                   help='Override checkpoint path from the YAML config.')
     p.add_argument('--compare', action='store_true',
                    help='Compare raw-CLIP zero-shot (class name) vs T2-tuned '
                         'model.embeddings. Skips multi-prompt encoding entirely.')
+    p.add_argument('--top-logits', action='store_true',
+                   help='Print/save per-GT-box top-k class logits using '
+                        'T2-tuned model.embeddings.')
+    p.add_argument('--top-k', type=int, default=3,
+                   help='Number of top classes to report in --top-logits mode.')
+    p.add_argument('--max-boxes-per-class', type=int, default=10,
+                   help='Per-GT-class cap in --top-logits mode.')
+    p.add_argument('--only-task', choices=['T1', 'T2', 'all'], default='T2',
+                   help='Filter GT classes by OWOD task split in --top-logits mode.')
     args = p.parse_args()
     if args.dataset:
         args.config = DATASET_CONFIGS[args.dataset]
@@ -233,6 +244,8 @@ def main():
 
     with open(args.config) as f:
         pcfg = yaml.safe_load(f)
+    if args.checkpoint:
+        pcfg['checkpoint'] = args.checkpoint
 
     tag = pcfg['experiment_tag']
     out_dir = args.out_dir or f'results/probe/{tag}'
@@ -346,6 +359,196 @@ def main():
 
     iou_thr = float(pcfg.get('iou_threshold', 0.5))
     print(f'[forward] bs={bs} workers={nw} amp={use_amp} IoU>={iou_thr}')
+
+    # ═══════════════════════════════════════════════════════════════════
+    # TOP-LOGITS MODE: one best-IoU anchor per GT box, T2-tuned prompts
+    # ═══════════════════════════════════════════════════════════════════
+    if args.top_logits:
+        owod_classes = list(inner.metainfo.get('classes', []))
+        alias_to_emb_idx = {name: i for i, name in enumerate(owod_classes)}
+        print(f'[toplogits] OWOD class list ({len(owod_classes)}): {owod_classes}')
+
+        t2_emb_rows = []
+        for ce in class_entries:
+            idx = None
+            for alias in ce['gt_alias']:
+                idx = alias_to_emb_idx.get(alias)
+                if idx is not None:
+                    break
+            t2_emb_rows.append(idx)
+        missing = [class_entries[i]['name'] for i, idx in enumerate(t2_emb_rows)
+                   if idx is None]
+        if missing:
+            print(f'[toplogits] WARNING: no embedding index for: {missing}')
+
+        with torch.no_grad():
+            emb = model.embeddings.detach().float()
+            txt_rows = []
+            for idx in t2_emb_rows:
+                if idx is not None:
+                    row = torch.nn.functional.normalize(emb[idx], dim=-1, p=2)
+                else:
+                    row = torch.zeros(emb.shape[1], device=device)
+                txt_rows.append(row)
+            tuned_txt = torch.stack(txt_rows).to(device)
+        txt_b = tuned_txt.unsqueeze(0)
+
+        ds_key = args.dataset or detect_dataset_key(pcfg['model_config'])
+        split_map = TASK_SPLITS.get(ds_key)
+        def task_of_gt(gt_name):
+            if not split_map:
+                return ''
+            if gt_name in split_map['T1']:
+                return 'T1'
+            if gt_name in split_map['T2']:
+                return 'T2'
+            return ''
+
+        class_names = [ce['name'] for ce in class_entries]
+        gt_to_display = {}
+        for ce in class_entries:
+            for alias in ce['gt_alias']:
+                gt_to_display[alias] = ce['name']
+
+        rows = []
+        per_class = defaultdict(int)
+        max_per = int(args.max_boxes_per_class)
+        top_k = max(1, min(int(args.top_k), len(class_entries)))
+        t0 = time.time()
+        n_done = 0
+
+        with torch.no_grad():
+            for batch in loader:
+                if max_per > 0 and split_map and args.only_task != 'all':
+                    wanted = split_map[args.only_task]
+                    if all(per_class[c] >= max_per for c in wanted):
+                        break
+
+                imgs = batch['img'].to(device, non_blocking=True).float() / 255.0
+                B = imgs.shape[0]
+                txt_in = txt_b.expand(B, -1, -1)
+
+                with torch.cuda.amp.autocast(enabled=use_amp):
+                    img_raw = model.backbone.forward_image(imgs)
+                    img_feats = model.neck(img_raw) if model.with_neck else img_raw
+                    cls_list, bbox_list = head_module.forward_one2one(img_feats, txt_in)
+
+                featmap_sizes = [(t.shape[-2], t.shape[-1]) for t in cls_list]
+                mlvl_priors = head.prior_generator.grid_priors(
+                    featmap_sizes, dtype=torch.float32,
+                    device=device, with_stride=True)
+                flat_priors = torch.cat(mlvl_priors, dim=0)
+                flat_logits = torch.cat([
+                    t.permute(0, 2, 3, 1).reshape(B, -1, N_C).float()
+                    for t in cls_list], dim=1)
+                flat_bbox = torch.cat([
+                    t.permute(0, 2, 3, 1).reshape(B, -1, 4).float()
+                    for t in bbox_list], dim=1)
+                anchor_boxes = head.bbox_coder.decode(
+                    flat_priors[..., :2], flat_bbox, flat_priors[:, [2]][..., 0])
+
+                for bi in range(B):
+                    img_id = batch['img_id'][bi]
+                    gt_full = parse_voc_xml(imgid2ann[img_id])
+                    if not gt_full:
+                        continue
+                    gt_orig = torch.tensor([g[1] for g in gt_full],
+                                           dtype=torch.float32, device=device)
+                    sx, sy = float(batch['scale'][bi][0]), float(batch['scale'][bi][1])
+                    pad_top = float(batch['pad'][bi][0])
+                    pad_left = float(batch['pad'][bi][2])
+                    gt_boxes = gt_orig.clone()
+                    gt_boxes[:, [0, 2]] = gt_boxes[:, [0, 2]] * sx + pad_left
+                    gt_boxes[:, [1, 3]] = gt_boxes[:, [1, 3]] * sy + pad_top
+                    gt_names = [g[0] for g in gt_full]
+
+                    ious = box_iou_xyxy(anchor_boxes[bi], gt_boxes)
+                    best_iou, best_anchor = ious.max(dim=0)
+                    for gi, gname in enumerate(gt_names):
+                        if args.only_task != 'all' and task_of_gt(gname) != args.only_task:
+                            continue
+                        if max_per > 0 and per_class[gname] >= max_per:
+                            continue
+                        ci = gt_to_class.get(gname)
+                        if ci is None:
+                            continue
+
+                        logits = flat_logits[bi, best_anchor[gi]].float()
+                        probs = logits.sigmoid()
+                        vals, idxs = torch.topk(logits, k=top_k)
+                        score_vals = probs[idxs]
+                        sorted_idx = torch.argsort(logits, descending=True)
+                        true_rank = int((sorted_idx == ci).nonzero(as_tuple=True)[0][0]) + 1
+
+                        per_class[gname] += 1
+                        row = {
+                            'gt_class': gname,
+                            'display_class': gt_to_display.get(gname, gname),
+                            'task': task_of_gt(gname),
+                            'sample': per_class[gname],
+                            'img_id': img_id,
+                            'best_iou': float(best_iou[gi].item()),
+                            'true_rank': true_rank,
+                            'true_logit': float(logits[ci].item()),
+                            'true_score': float(probs[ci].item()),
+                            'top': [(class_names[int(i)], float(v.item()),
+                                     float(s.item()))
+                                    for i, v, s in zip(idxs, vals, score_vals)],
+                        }
+                        rows.append(row)
+
+                n_done += B
+                if n_done % (bs * 25) == 0 or n_done >= n_imgs:
+                    dt = time.time() - t0
+                    ips = n_done / max(dt, 1e-6)
+                    eta = (n_imgs - n_done) / max(ips, 1e-6)
+                    print(f'  processed {n_done}/{n_imgs}  '
+                          f'({ips:.1f} img/s, eta {eta:.0f}s)')
+
+        csv_path = os.path.join(out_dir, 'top_logits.csv')
+        header = ['gt_class', 'display_class', 'task', 'sample', 'img_id',
+                  'best_iou', 'true_rank', 'true_logit', 'true_score']
+        for k in range(1, top_k + 1):
+            header += [f'top{k}_class', f'top{k}_logit', f'top{k}_score']
+        with open(csv_path, 'w', newline='') as f:
+            w = csv.writer(f)
+            w.writerow(header)
+            for r in rows:
+                flat = [r['gt_class'], r['display_class'], r['task'],
+                        r['sample'], r['img_id'], f"{r['best_iou']:.4f}",
+                        r['true_rank'], f"{r['true_logit']:.4f}",
+                        f"{r['true_score']:.4f}"]
+                for name, logit, score in r['top']:
+                    flat += [name, f'{logit:.4f}', f'{score:.4f}']
+                w.writerow(flat)
+
+        lines = [
+            f'=== TOP-{top_k} TUNED-PROMPT LOGITS  v={tag}  '
+            f'split={split}  boxes={len(rows)}  only_task={args.only_task} ===',
+            'One row = one GT box, scored at its best-IoU one2one anchor.',
+            'Score is sigmoid(logit); ranking uses raw logits.\n',
+        ]
+        by_gt = defaultdict(list)
+        for r in rows:
+            by_gt[r['gt_class']].append(r)
+        for gname in sorted(by_gt):
+            lines.append(f'{gname}  N={len(by_gt[gname])}')
+            for r in by_gt[gname]:
+                tops = '  '.join(
+                    f'{name}: logit={logit:+.3f}, score={score:.3f}'
+                    for name, logit, score in r['top'])
+                lines.append(
+                    f'  #{r["sample"]:02d} img={r["img_id"]} '
+                    f'iou={r["best_iou"]:.3f} true_rank={r["true_rank"]} '
+                    f'true={r["true_logit"]:+.3f}/{r["true_score"]:.3f}  {tops}')
+            lines.append('')
+        text = '\n'.join(lines)
+        print('\n' + text)
+        with open(os.path.join(out_dir, 'top_logits.txt'), 'w') as f:
+            f.write(text + '\n')
+        print(f'\n[write] {out_dir}/{{top_logits.csv,top_logits.txt}}')
+        print(f'\nTOP-LOGITS FINISHED at {time.strftime("%c")}')
+        return
 
     # ═══════════════════════════════════════════════════════════════════
     # COMPARE MODE: zero-shot class name vs T2-tuned model.embeddings

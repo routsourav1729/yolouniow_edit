@@ -1,0 +1,269 @@
+{
+  "cache": "cache/idd/viscache_10shot_seed1.pt",
+  "novel_class_names": [
+    "bus",
+    "truck",
+    "tanker_vehicle",
+    "crane_truck",
+    "street_cart",
+    "excavator"
+  ],
+  "num_levels": 3,
+  "per_level": {
+    "0": {
+      "n_classes": 6,
+      "n_supports": 35,
+      "loo_acc": 0.5714285714285714,
+      "loo_margin": {
+        "n": 35,
+        "mean": 0.07617203167506627,
+        "std": 0.0679017237342255,
+        "min": 0.0011197924613952637,
+        "p50": 0.07032674551010132,
+        "max": 0.31226062774658203,
+        "p10": 0.007320082187652592,
+        "p25": 0.02843669056892395,
+        "p75": 0.08968383073806763,
+        "p90": 0.14019401073455812
+      },
+      "classes": {
+        "bus": {
+          "level": 0,
+          "class_idx": 0,
+          "class": "bus",
+          "n_support": 7,
+          "within_mean": 0.5049980467274076,
+          "within_p10": 0.3235812187194824,
+          "own_proto_mean": 0.7587572421346392,
+          "best_other_proto_mean": 0.6589182019233704,
+          "own_minus_best_other_mean": 0.09983904021126884
+        },
+        "truck": {
+          "level": 0,
+          "class_idx": 1,
+          "class": "truck",
+          "n_support": 6,
+          "within_mean": 0.5873614927132924,
+          "within_p10": 0.44706223011016843,
+          "own_proto_mean": 0.8100213209788004,
+          "best_other_proto_mean": 0.6921349863211314,
+          "own_minus_best_other_mean": 0.11788633465766907
+        },
+        "tanker_vehicle": {
+          "level": 0,
+          "class_idx": 2,
+          "class": "tanker_vehicle",
+          "n_support": 3,
+          "within_mean": 0.72243865331014,
+          "within_p10": 0.636861777305603,
+          "own_proto_mean": 0.9027508894602457,
+          "best_other_proto_mean": 0.7655169367790222,
+          "own_minus_best_other_mean": 0.13723395268122354
+        },
+        "crane_truck": {
+          "level": 0,
+          "class_idx": 3,
+          "class": "crane_truck",
+          "n_support": 6,
+          "within_mean": 0.5856094638506572,
+          "within_p10": 0.4428665816783905,
+          "own_proto_mean": 0.8091196715831757,
+          "best_other_proto_mean": 0.7039428651332855,
+          "own_minus_best_other_mean": 0.10517680644989014
+        },
+        "street_cart": {
+          "level": 0,
+          "class_idx": 4,
+          "class": "street_cart",
+          "n_support": 7,
+          "within_mean": 0.5685491036801111,
+          "within_p10": 0.44613784551620483,
+          "own_proto_mean": 0.7938419495310102,
+          "best_other_proto_mean": 0.6200688055583409,
+          "own_minus_best_other_mean": 0.17377314397266932
+        },
+        "excavator": {
+          "level": 0,
+          "class_idx": 5,
+          "class": "excavator",
+          "n_support": 6,
+          "within_mean": 0.6745952208836873,
+          "within_p10": 0.512206894159317,
+          "own_proto_mean": 0.8537150422732035,
+          "best_other_proto_mean": 0.7736198206742605,
+          "own_minus_best_other_mean": 0.08009522159894307
+        }
+      }
+    },
+    "1": {
+      "n_classes": 6,
+      "n_supports": 51,
+      "loo_acc": 0.5490196078431373,
+      "loo_margin": {
+        "n": 51,
+        "mean": 0.038532406676049326,
+        "std": 0.0444131903985853,
+        "min": 0.0017725825309753418,
+        "p50": 0.02196633815765381,
+        "max": 0.20300403237342834,
+        "p10": 0.005106925964355469,
+        "p25": 0.007624566555023193,
+        "p75": 0.0500168651342392,
+        "p90": 0.09987831115722656
+      },
+      "classes": {
+        "bus": {
+          "level": 1,
+          "class_idx": 0,
+          "class": "bus",
+          "n_support": 6,
+          "within_mean": 0.4615216920773188,
+          "within_p10": 0.27995267808437346,
+          "own_proto_mean": 0.7424743175506592,
+          "best_other_proto_mean": 0.6727953354517618,
+          "own_minus_best_other_mean": 0.0696789820988973
+        },
+        "truck": {
+          "level": 1,
+          "class_idx": 1,
+          "class": "truck",
+          "n_support": 5,
+          "within_mean": 0.7747230589389801,
+          "within_p10": 0.6101587891578675,
+          "own_proto_mean": 0.9054161906242371,
+          "best_other_proto_mean": 0.8569228768348693,
+          "own_minus_best_other_mean": 0.04849331378936768
+        },
+        "tanker_vehicle": {
+          "level": 1,
+          "class_idx": 2,
+          "class": "tanker_vehicle",
+          "n_support": 10,
+          "within_mean": 0.7810497707790799,
+          "within_p10": 0.5827591061592102,
+          "own_proto_mean": 0.8960718214511871,
+          "best_other_proto_mean": 0.887275630235672,
+          "own_minus_best_other_mean": 0.008796191215515137
+        },
+        "crane_truck": {
+          "level": 1,
+          "class_idx": 3,
+          "class": "crane_truck",
+          "n_support": 10,
+          "within_mean": 0.7318811800744799,
+          "within_p10": 0.4810802102088928,
+          "own_proto_mean": 0.8710298717021943,
+          "best_other_proto_mean": 0.7995236992835999,
+          "own_minus_best_other_mean": 0.07150617241859436
+        },
+        "street_cart": {
+          "level": 1,
+          "class_idx": 4,
+          "class": "street_cart",
+          "n_support": 10,
+          "within_mean": 0.6342592510912154,
+          "within_p10": 0.39561588168144224,
+          "own_proto_mean": 0.8190441012382508,
+          "best_other_proto_mean": 0.7230029791593552,
+          "own_minus_best_other_mean": 0.09604112207889556
+        },
+        "excavator": {
+          "level": 1,
+          "class_idx": 5,
+          "class": "excavator",
+          "n_support": 10,
+          "within_mean": 0.5629216185874409,
+          "within_p10": 0.15043672025203705,
+          "own_proto_mean": 0.7788642138242722,
+          "best_other_proto_mean": 0.7716974198818207,
+          "own_minus_best_other_mean": 0.007166793942451477
+        }
+      }
+    },
+    "2": {
+      "n_classes": 6,
+      "n_supports": 27,
+      "loo_acc": 0.5925925925925926,
+      "loo_margin": {
+        "n": 27,
+        "mean": 0.03872252614409835,
+        "std": 0.037502444343201935,
+        "min": 0.00041025876998901367,
+        "p50": 0.028559863567352295,
+        "max": 0.16302287578582764,
+        "p10": 0.008872294425964355,
+        "p25": 0.014957726001739502,
+        "p75": 0.04887360334396362,
+        "p90": 0.06723023653030395
+      },
+      "classes": {
+        "bus": {
+          "level": 2,
+          "class_idx": 0,
+          "class": "bus",
+          "n_support": 3,
+          "within_mean": 0.8732460141181946,
+          "within_p10": 0.85920250415802,
+          "own_proto_mean": 0.9568162759145101,
+          "best_other_proto_mean": 0.8434861302375793,
+          "own_minus_best_other_mean": 0.11333014567693074
+        },
+        "truck": {
+          "level": 2,
+          "class_idx": 1,
+          "class": "truck",
+          "n_support": 2,
+          "within_mean": 0.7129339575767517,
+          "within_p10": 0.7129339575767517,
+          "own_proto_mean": 0.9254550933837891,
+          "best_other_proto_mean": 0.8877579271793365,
+          "own_minus_best_other_mean": 0.037697166204452515
+        },
+        "tanker_vehicle": {
+          "level": 2,
+          "class_idx": 2,
+          "class": "tanker_vehicle",
+          "n_support": 6,
+          "within_mean": 0.7045850833257039,
+          "within_p10": 0.5333778381347656,
+          "own_proto_mean": 0.8682286043961843,
+          "best_other_proto_mean": 0.8487114707628886,
+          "own_minus_best_other_mean": 0.019517133633295696
+        },
+        "crane_truck": {
+          "level": 2,
+          "class_idx": 3,
+          "class": "crane_truck",
+          "n_support": 4,
+          "within_mean": 0.8117600778738657,
+          "within_p10": 0.7273254692554474,
+          "own_proto_mean": 0.9267254769802094,
+          "best_other_proto_mean": 0.7886919975280762,
+          "own_minus_best_other_mean": 0.13803347945213318
+        },
+        "street_cart": {
+          "level": 2,
+          "class_idx": 4,
+          "class": "street_cart",
+          "n_support": 5,
+          "within_mean": 0.6945367932319642,
+          "within_p10": 0.505512934923172,
+          "own_proto_mean": 0.8692695498466492,
+          "best_other_proto_mean": 0.842863118648529,
+          "own_minus_best_other_mean": 0.02640643119812012
+        },
+        "excavator": {
+          "level": 2,
+          "class_idx": 5,
+          "class": "excavator",
+          "n_support": 7,
+          "within_mean": 0.7962627070290702,
+          "within_p10": 0.6668158769607544,
+          "own_proto_mean": 0.9084977081843785,
+          "best_other_proto_mean": 0.8797160983085632,
+          "own_minus_best_other_mean": 0.028781609875815257
+        }
+      }
+    }
+  }
+}

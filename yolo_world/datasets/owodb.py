@@ -48,6 +48,7 @@ class OWODDataset(BatchShapePolicyDataset, BaseDetDataset):
                  fewshot_dir: str = '',
                  fewshot_k: int = 0,
                  fewshot_seed: int = 1,
+                 fewshot_scope: str = 'novel',
                  **kwargs):
 
         self.images = []
@@ -68,6 +69,7 @@ class OWODDataset(BatchShapePolicyDataset, BaseDetDataset):
         self._fewshot_dir = fewshot_dir
         self._fewshot_k = fewshot_k
         self._fewshot_seed = fewshot_seed
+        self._fewshot_scope = fewshot_scope
         self._fewshot_allowed = {}  # img_id -> set of allowed class names
         
         self._logger = MMLogger.get_current_instance()
@@ -132,13 +134,21 @@ class OWODDataset(BatchShapePolicyDataset, BaseDetDataset):
         """
         prev_intro = self.owod_cfg.PREV_INTRODUCED_CLS
         curr_intro = self.owod_cfg.CUR_INTRODUCED_CLS
-        novel_classes = list(self.CLASS_NAMES[prev_intro:prev_intro + curr_intro])
+        if self._fewshot_scope == 'novel':
+            selected_classes = list(
+                self.CLASS_NAMES[prev_intro:prev_intro + curr_intro])
+        elif self._fewshot_scope == 'all_known':
+            selected_classes = list(self.CLASS_NAMES[:prev_intro + curr_intro])
+        else:
+            raise ValueError(
+                f"Invalid fewshot_scope: {self._fewshot_scope}. "
+                "Expected 'novel' or 'all_known'.")
 
         seed_dir = os.path.join(self._fewshot_dir,
                                 f'seed{self._fewshot_seed}')
 
         all_ids = []
-        for cls in novel_classes:
+        for cls in selected_classes:
             fname = f'box_{self._fewshot_k}shot_{cls}_train.txt'
             fpath = os.path.join(seed_dir, fname)
             if not os.path.exists(fpath):
@@ -165,11 +175,12 @@ class OWODDataset(BatchShapePolicyDataset, BaseDetDataset):
                 unique_ids.append(fid)
 
         self.image_set_list = [
-            f'fewshot_{self._fewshot_k}shot_seed{self._fewshot_seed}'
+            f'fewshot_{self._fewshot_scope}_{self._fewshot_k}shot_seed{self._fewshot_seed}'
         ]
         self._logger.info(
             f'Few-shot: {len(unique_ids)} unique images, '
-            f'{len(novel_classes)} classes, k={self._fewshot_k}')
+            f'{len(selected_classes)} classes, k={self._fewshot_k}, '
+            f'scope={self._fewshot_scope}')
         return unique_ids
 
     ### OWOD
@@ -222,7 +233,9 @@ class OWODDataset(BatchShapePolicyDataset, BaseDetDataset):
 
         self._logger.info(f"{self.dataset} Loaded, {len(data_list)} images in total")
 
-        # Few-shot k-instance cap per class (like CED-FOOD's np.random.choice)
+        # Few-shot k-instance cap per novel class (like CED-FOOD's np.random.choice).
+        # Base instances are kept when fewshot_scope='all_known' so they can
+        # stabilize the selected classification kernels during T2.
         if self._fewshot_k > 0 and self._fewshot_allowed:
             data_list = self._cap_fewshot_instances(data_list)
 
@@ -329,6 +342,8 @@ class OWODDataset(BatchShapePolicyDataset, BaseDetDataset):
         if 'train' in self.image_set:
             if self.training_strategy == 1: # oracle
                 instances = self.label_known_class_and_unknown(instances)
+            elif self._fewshot_scope == 'all_known':
+                instances = self.remove_unknown_instances(instances)
             else: # owod
                 instances = self.remove_prev_class_and_unk_instances(instances)
         elif 'test' in self.image_set:

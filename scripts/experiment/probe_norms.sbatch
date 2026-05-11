@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=probe_norms
-#SBATCH --output=slurm_logs/experiment/probe_norms_%j.out
-#SBATCH --error=slurm_logs/experiment/probe_norms_%j.err
+#SBATCH --job-name=idd_unk_novel_probe
+#SBATCH --output=slurm_logs/experiment/unk_novel_probe_%j.out
+#SBATCH --error=slurm_logs/experiment/unk_novel_probe_%j.err
 #SBATCH --partition=l40
 #SBATCH --qos=l40
 #SBATCH --nodes=1
@@ -12,27 +12,26 @@
 #SBATCH --time=08:00:00
 
 # ============================================================================
-# NORM PROBE EXPERIMENT
+# IDD UNKNOWN-vs-NOVEL-CACHE EVIDENCE PROBE
 #
-# Measures ||BN(F_v)||_2 per matched GT anchor, grouped by class role
-# (base / novel / unknown). Tests whether novel-class instances have
-# systematically lower post-BN visual feature norms than base classes,
-# which would suppress their classification scores regardless of angular alignment.
+# Replaces the old BN-norm probe. Uses the existing K-shot novel visual cache
+# (post-BN features, usually built with IoU>=0.9) and scans the IDD test set.
 #
-# Runs 4 cells in sequence (single job):
-#   IDD      T1 ckpt  ×  {test, t1_train}
-#   nuScenes T1 ckpt  ×  {test, t1_train}
+# For each GT object in IDD test (base, novel, and true unknown):
+#   - select a matched one2one anchor by correct-class/T_unk TAL or best IoU,
+#   - compare BN(anchor) with per-level cached novel prototypes,
+#   - write a class x novel-cache cosine matrix.
+#
+# This answers: if we suppress T_unk when an unknown-selected anchor looks
+# novel-like, is that similarity specific to novel GTs, or shared by true
+# unknown/base GTs too?
 #
 # Usage:
 #   sbatch scripts/experiment/probe_norms.sbatch
-#   sbatch scripts/experiment/probe_norms.sbatch --match-iou 0.5   # looser matching
-#   sbatch scripts/experiment/probe_norms.sbatch --num-images 2000  # quick test
-#
-# Outputs (in probe_out/):
-#   idd_t1_test.csv / .json
-#   idd_t1_train.csv / .json
-#   nu_t1_test.csv / .json
-#   nu_t1_train.csv / .json
+#   sbatch scripts/experiment/probe_norms.sbatch --variant plain
+#   sbatch scripts/experiment/probe_norms.sbatch --match-iou 0.8 --selection best_iou
+#   sbatch scripts/experiment/probe_norms.sbatch --num-images 500
+#   sbatch scripts/experiment/probe_norms.sbatch --ckpt /path/to/t2.pth --cache /path/to/cache.pt
 # ============================================================================
 
 source /home/agipml/sourav.rout/miniconda3/bin/activate yolouniow
@@ -50,172 +49,127 @@ export PYTHONUNBUFFERED=1
 
 cd /home/agipml/sourav.rout/ALL_FILES/hypyolo/YOLO-UniOW
 
-mkdir -p slurm_logs/experiment probe_out
+mkdir -p slurm_logs/experiment probe_out/unknown_novel
 
-# ── Parse args ────────────────────────────────────────────────────────────
+VARIANT="wapr"
+SHOT=10
+SEED=1
 MATCH_IOU=0.9
+SELECTION="tunk_tal"
 NUM_IMAGES=0
-BATCH_SIZE=64
+BATCH_SIZE=32
 NUM_WORKERS=8
-VIS=0
-VIS_NEIGHBORS=30
-VIS_MIN_DIST=0.1
-VIS_MAX_PER_CLASS=2000
+CKPT_OVERRIDE=""
+T1_CKPT_OVERRIDE=""
+CACHE_OVERRIDE=""
+OUT_TAG=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --match-iou)         MATCH_IOU="$2";         shift 2 ;;
-        --num-images)        NUM_IMAGES="$2";        shift 2 ;;
-        --batch-size)        BATCH_SIZE="$2";        shift 2 ;;
-        --num-workers)       NUM_WORKERS="$2";       shift 2 ;;
-        --vis)               VIS=1;                  shift 1 ;;
-        --vis-n-neighbors)   VIS_NEIGHBORS="$2";     shift 2 ;;
-        --vis-min-dist)      VIS_MIN_DIST="$2";      shift 2 ;;
-        --vis-max-per-class) VIS_MAX_PER_CLASS="$2"; shift 2 ;;
+        --variant)       VARIANT="$2"; shift 2 ;;
+        --shot)          SHOT="$2"; shift 2 ;;
+        --seed)          SEED="$2"; shift 2 ;;
+        --match-iou)     MATCH_IOU="$2"; shift 2 ;;
+        --selection)     SELECTION="$2"; shift 2 ;;
+        --num-images)    NUM_IMAGES="$2"; shift 2 ;;
+        --batch-size)    BATCH_SIZE="$2"; shift 2 ;;
+        --num-workers)   NUM_WORKERS="$2"; shift 2 ;;
+        --ckpt)          CKPT_OVERRIDE="$2"; shift 2 ;;
+        --t1-ckpt)       T1_CKPT_OVERRIDE="$2"; shift 2 ;;
+        --cache)         CACHE_OVERRIDE="$2"; shift 2 ;;
+        --out-tag)       OUT_TAG="$2"; shift 2 ;;
         *) echo "Unknown arg: $1"; exit 1 ;;
     esac
 done
 
+case "$VARIANT" in
+    plain) SUFFIX="" ;;
+    wapr)  SUFFIX="_wapr" ;;
+    kume)  SUFFIX="_kume" ;;
+    wapr_kume) SUFFIX="_wapr_kume" ;;
+    *) SUFFIX="_${VARIANT}" ;;
+esac
+
+CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2.py
+T2_WORK_DIR=work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_train_task2_${SHOT}shot_seed${SEED}${SUFFIX}
+if [ -n "$CKPT_OVERRIDE" ]; then
+    CKPT="$CKPT_OVERRIDE"
+else
+    CKPT=$(ls -t "${T2_WORK_DIR}"/best*.pth 2>/dev/null | head -1)
+fi
+
+if [ -z "$CKPT" ] || [ ! -f "$CKPT" ]; then
+    echo "ERROR: no T2 checkpoint found."
+    echo "  work dir: $T2_WORK_DIR"
+    echo "  pass --ckpt explicitly"
+    exit 1
+fi
+
+if [ -n "$CACHE_OVERRIDE" ]; then
+    CACHE="$CACHE_OVERRIDE"
+else
+    CACHE=cache/idd/viscache_${SHOT}shot_seed${SEED}.pt
+fi
+if [ ! -f "$CACHE" ]; then
+    echo "ERROR: visual cache not found: $CACHE"
+    echo "Build it first, e.g. scripts/eval_viscache.sbatch or tools/owod_scripts/build_visual_cache.py"
+    exit 1
+fi
+
+if [ -n "$T1_CKPT_OVERRIDE" ]; then
+    T1_CKPT="$T1_CKPT_OVERRIDE"
+else
+    T1_CKPT=work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_train_task1/best_owod_Both_epoch_20.pth
+fi
+T1_FLAG=""
+if [ -f "$T1_CKPT" ]; then
+    T1_FLAG="--t1-tunk-checkpoint $T1_CKPT --t1-unk-index 8"
+else
+    echo "WARN: T1 checkpoint not found; using current T2 T_unk as fallback."
+    echo "  missing: $T1_CKPT"
+fi
+
 NUM_IMAGES_FLAG=""
 [ "$NUM_IMAGES" -gt 0 ] 2>/dev/null && NUM_IMAGES_FLAG="--num-images $NUM_IMAGES"
 
-VIS_FLAGS=""
-if [ "$VIS" = "1" ]; then
-    VIS_FLAGS="--vis --vis-n-neighbors $VIS_NEIGHBORS --vis-min-dist $VIS_MIN_DIST --vis-max-per-class $VIS_MAX_PER_CLASS"
-    mkdir -p probe_out/umap
-fi
-
-# ── Checkpoint + config table ─────────────────────────────────────────────
-# T1 ckpts (norm-mode default)
-IDD_T1_CKPT=work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_train_task1/best_owod_Both_epoch_20.pth
-IDD_T1_CFG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd.py
-NU_T1_CKPT=work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_nuowodb_train_task1/best_owod_Both_epoch_20.pth
-NU_T1_CFG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod.py
-
-# T2 ckpts (vis-mode default — known prompts include both base + novel)
-IDD_T2_CKPT=work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_train_task2_10shot_seed1/best_owod_Both_epoch_40.pth
-IDD_T2_CFG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2.py
-NU_T2_CKPT=work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_nuowodb_train_task2_10shot_seed1/best_owod_Both_epoch_10.pth
-NU_T2_CFG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod.py
-
-if [ "$VIS" = "1" ]; then
-    MODE_DESC="VIS (UMAP only, train splits, T2 weights)"
-else
-    MODE_DESC="NORM (CSV+JSON, all splits, T1 weights)"
-fi
+TAG=${OUT_TAG:-idd_t2_${VARIANT}_${SHOT}shot_seed${SEED}_${SELECTION}_iou${MATCH_IOU}}
+OUT_CSV=probe_out/unknown_novel/${TAG}.csv
+OUT_JSON=probe_out/unknown_novel/${TAG}.json
+OUT_MATRIX=probe_out/unknown_novel/${TAG}_matrix.csv
 
 echo "============================================================"
-echo "  PROBE: BN(F_v)  —  $MODE_DESC"
-echo "  match_iou=$MATCH_IOU  batch=$BATCH_SIZE  num_images=${NUM_IMAGES:-all}"
-echo "  Job: $SLURM_JOB_ID"
+echo "  IDD UNKNOWN-vs-NOVEL-CACHE PROBE"
+echo "  variant:     $VARIANT"
+echo "  config:      $CONFIG"
+echo "  T2 ckpt:     $CKPT"
+echo "  cache:       $CACHE"
+echo "  T1 Tunk:     ${T1_CKPT:-none}"
+echo "  match_iou:   $MATCH_IOU"
+echo "  selection:   $SELECTION"
+echo "  images:      ${NUM_IMAGES:-all}"
+echo "  output:      $OUT_CSV"
+echo "  matrix:      $OUT_MATRIX"
+echo "  job:         $SLURM_JOB_ID"
 echo "============================================================"
-echo ""
 
-if [ "$VIS" = "1" ]; then
-    # ─────────────────────────────────────────────────────────────────────
-    # VIS MODE: only run the two TRAIN splits using T2 weights so that
-    # Tunk + base + novel prompt vectors are all available on the UMAP.
-    # Matching is best-IoU only — choice of weights does NOT affect anchor
-    # selection (label comes from VOC XML).
-    # ─────────────────────────────────────────────────────────────────────
-
-    echo ">>> [1/2] IDD  T2-ckpt  t1_train  (vis)"
-    DATASET=IDD TASK=2 THRESHOLD=0.05 SAVE=False \
-        FEWSHOT_K=10 FEWSHOT_SEED=1 FEWSHOT_DIR=data/OWOD/iddsplit \
-        python tools/probe_norms.py \
-            --config      "$IDD_T2_CFG" \
-            --checkpoint  "$IDD_T2_CKPT" \
-            --split       t1_train \
-            --out-csv     probe_out/umap/idd_t2_train.csv \
-            --match-iou   "$MATCH_IOU" \
-            --batch-size  "$BATCH_SIZE" \
-        --num-workers "$NUM_WORKERS" \
-            $NUM_IMAGES_FLAG $VIS_FLAGS
-    echo ""
-
-    echo ">>> [2/2] nuScenes  T2-ckpt  t1_train  (vis)"
-    DATASET=nuOWODB TASK=2 THRESHOLD=0.05 SAVE=False \
-        FEWSHOT_K=10 FEWSHOT_SEED=1 FEWSHOT_DIR=data/OWOD/nuowodb_fewshot_tfa \
-        python tools/probe_norms.py \
-            --config      "$NU_T2_CFG" \
-            --checkpoint  "$NU_T2_CKPT" \
-            --split       t1_train \
-            --out-csv     probe_out/umap/nu_t2_train.csv \
-            --match-iou   "$MATCH_IOU" \
-            --batch-size  "$BATCH_SIZE" \
-        --num-workers "$NUM_WORKERS" \
-            $NUM_IMAGES_FLAG $VIS_FLAGS
-    echo ""
-
-    echo "============================================================"
-    echo "VIS DONE  —  $(date)"
-    ls -lh probe_out/umap/*.png probe_out/umap/*.npz 2>/dev/null
-    echo "============================================================"
-    exit 0
-fi
-
-# ── NORM MODE: 4 cells ───────────────────────────────────────────────────
-echo ">>> [1/4] IDD  T1-ckpt  test"
-DATASET=IDD TASK=1 THRESHOLD=0.05 SAVE=False \
-    FEWSHOT_K=10 FEWSHOT_SEED=1 FEWSHOT_DIR=data/OWOD/iddsplit \
+DATASET=IDD TASK=2 THRESHOLD=0.05 SAVE=False \
+    FEWSHOT_K=${SHOT} FEWSHOT_SEED=${SEED} FEWSHOT_DIR=data/OWOD/iddsplit \
     python tools/probe_norms.py \
-        --config      "$IDD_T1_CFG" \
-        --checkpoint  "$IDD_T1_CKPT" \
-        --split       test \
-        --out-csv     probe_out/idd_t1_test.csv \
-        --out-json    probe_out/idd_t1_test.json \
-        --match-iou   "$MATCH_IOU" \
-        --batch-size  "$BATCH_SIZE" \
+        --config "$CONFIG" \
+        --checkpoint "$CKPT" \
+        --cache "$CACHE" \
+        --split test \
+        --out-csv "$OUT_CSV" \
+        --out-matrix "$OUT_MATRIX" \
+        --out-json "$OUT_JSON" \
+        --match-iou "$MATCH_IOU" \
+        --selection "$SELECTION" \
+        --batch-size "$BATCH_SIZE" \
         --num-workers "$NUM_WORKERS" \
-        $NUM_IMAGES_FLAG
-echo ""
-
-echo ">>> [2/4] IDD  T1-ckpt  t1_train"
-DATASET=IDD TASK=1 THRESHOLD=0.05 SAVE=False \
-    FEWSHOT_K=10 FEWSHOT_SEED=1 FEWSHOT_DIR=data/OWOD/iddsplit \
-    python tools/probe_norms.py \
-        --config      "$IDD_T1_CFG" \
-        --checkpoint  "$IDD_T1_CKPT" \
-        --split       t1_train \
-        --out-csv     probe_out/idd_t1_train.csv \
-        --out-json    probe_out/idd_t1_train.json \
-        --match-iou   "$MATCH_IOU" \
-        --batch-size  "$BATCH_SIZE" \
-        --num-workers "$NUM_WORKERS" \
-        $NUM_IMAGES_FLAG
-echo ""
-
-echo ">>> [3/4] nuScenes  T1-ckpt  test"
-DATASET=nuOWODB TASK=1 THRESHOLD=0.05 SAVE=False \
-    FEWSHOT_K=10 FEWSHOT_SEED=1 FEWSHOT_DIR=data/OWOD/nuowodb_fewshot_tfa \
-    python tools/probe_norms.py \
-        --config      "$NU_T1_CFG" \
-        --checkpoint  "$NU_T1_CKPT" \
-        --split       test \
-        --out-csv     probe_out/nu_t1_test.csv \
-        --out-json    probe_out/nu_t1_test.json \
-        --match-iou   "$MATCH_IOU" \
-        --batch-size  "$BATCH_SIZE" \
-        --num-workers "$NUM_WORKERS" \
-        $NUM_IMAGES_FLAG
-echo ""
-
-echo ">>> [4/4] nuScenes  T1-ckpt  t1_train"
-DATASET=nuOWODB TASK=1 THRESHOLD=0.05 SAVE=False \
-    FEWSHOT_K=10 FEWSHOT_SEED=1 FEWSHOT_DIR=data/OWOD/nuowodb_fewshot_tfa \
-    python tools/probe_norms.py \
-        --config      "$NU_T1_CFG" \
-        --checkpoint  "$NU_T1_CKPT" \
-        --split       t1_train \
-        --out-csv     probe_out/nu_t1_train.csv \
-        --out-json    probe_out/nu_t1_train.json \
-        --match-iou   "$MATCH_IOU" \
-        --batch-size  "$BATCH_SIZE" \
-        --num-workers "$NUM_WORKERS" \
-        $NUM_IMAGES_FLAG
-echo ""
+        $NUM_IMAGES_FLAG \
+        $T1_FLAG
 
 echo "============================================================"
-echo "NORM DONE  —  $(date)"
-ls -lh probe_out/*.csv 2>/dev/null
+echo "DONE — $(date)"
+ls -lh "$OUT_CSV" "$OUT_MATRIX" "$OUT_JSON" 2>/dev/null
 echo "============================================================"

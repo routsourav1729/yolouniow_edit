@@ -6,9 +6,9 @@
 #SBATCH --qos=l40
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
-#SBATCH --gres=gpu:1
-#SBATCH --mem=64G
+#SBATCH --cpus-per-task=32
+#SBATCH --gres=gpu:4
+#SBATCH --mem=128G
 #SBATCH --time=01:00:00
 
 # Always run from repo root so all relative paths (work_dirs/, configs/, ...) resolve.

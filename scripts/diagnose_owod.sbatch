@@ -22,6 +22,7 @@
 #   sbatch scripts/diagnose_owod.sbatch --dataset idd
 #   sbatch scripts/diagnose_owod.sbatch --dataset nuimages
 #   sbatch scripts/diagnose_owod.sbatch --dataset nuimages --out-dir results/probe/nu_v1
+#   sbatch scripts/diagnose_owod.sbatch --config configs/test/idd_train_top_logits.yaml --top-logits
 #
 # All experiment knobs (prompts, checkpoint, split, IoU threshold) live in the
 # YAML config. Bump experiment_tag in the YAML to version a new run.
@@ -44,7 +45,12 @@ while [[ $# -gt 0 ]]; do
                      fi
                      shift 2;;
         --out-dir)   OUT_DIR="$2"; shift 2;;
+        --checkpoint) PYTHON_ARGS="$PYTHON_ARGS --checkpoint $2"; shift 2;;
         --compare)   PYTHON_ARGS="$PYTHON_ARGS --compare"; shift 1;;
+        --top-logits) PYTHON_ARGS="$PYTHON_ARGS --top-logits"; shift 1;;
+        --top-k)     PYTHON_ARGS="$PYTHON_ARGS --top-k $2"; shift 2;;
+        --max-boxes-per-class) PYTHON_ARGS="$PYTHON_ARGS --max-boxes-per-class $2"; shift 2;;
+        --only-task) PYTHON_ARGS="$PYTHON_ARGS --only-task $2"; shift 2;;
         *) echo "Unknown arg: $1"; exit 1;;
     esac
 done

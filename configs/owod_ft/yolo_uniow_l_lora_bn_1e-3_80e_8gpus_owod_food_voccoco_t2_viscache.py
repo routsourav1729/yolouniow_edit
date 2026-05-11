@@ -11,6 +11,8 @@ model = dict(
             visual_cache_cfg=visual_cache_cfg,
             visual_alpha=visual_alpha)))
 
+test_dataloader = dict(batch_size=8)
+
 custom_hooks = [
     *_base_.custom_hooks,
     dict(type='VisualCacheLoadHook',

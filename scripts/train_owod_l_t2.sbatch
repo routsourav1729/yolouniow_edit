@@ -28,15 +28,19 @@
 # Optional arguments:
 #   --shot K              Number of shots per novel class (default: 10)
 #   --seed S              Fewshot seed index (default: 1)
-#   --wapr                Enable WAPR only
-#   --kume                Enable KUME only
-#   --wapr-kume           Enable both WAPR and KUME together (uses kume config which includes wapr dict)
+#   --wapr                Enable WAPR
+#   --hardneg             Enable contrastive hardneg from T1 cache (forces FEWSHOT_SCOPE=all_known)
+#   --hardneg-cache PATH  Override hardneg cache .pt path
+#   --hardneg-weight W    Hardneg loss weight (default: 1.0)
+#   --hardneg-no-novel    Target T_unk only (skip novel-prompt hard-negative term)
+#   --hardneg-no-unk      Target novel only (skip T_unk hard-negative term)
 #   --gpus N              Number of GPUs (default: SLURM_GPUS_ON_NODE or 1)
 #   --threshold T         Detection threshold (default: 0.05)
 #   --config PATH         Override T2 config file path
 #   --t1-ckpt PATH        Override T1 best checkpoint path (auto-detected by default)
 #   --alpha A             TAL assigner cls-score exponent (default: 0.5, try 0.25)
 #   --beta B              TAL assigner IoU exponent (default: 6.0, try 8.0)
+#   --suffix S            Extra suffix appended to T2 work/eval dirs
 # ============================================================================
 
 # ─── Parse arguments ─────────────────────────────────────────────────────────
@@ -44,35 +48,40 @@ DATASET=""
 FEWSHOT_K=10
 FEWSHOT_SEED=1
 USE_WAPR=0
-USE_KUME=0
-USE_KUME_KVK=0
-KUME_KVK_MARGIN_ARG=""
+USE_HARDNEG=0
+HARDNEG_CACHE_ARG=""
+HARDNEG_WEIGHT_ARG=""
+HARDNEG_TARGET_NOVEL_ARG=""
+HARDNEG_TARGET_UNK_ARG=""
 NUM_GPUS=""
 THRESHOLD=0.05
 CONFIG_OVERRIDE=""
 T1_CKPT_OVERRIDE=""
 TAL_ALPHA=""
 TAL_BETA=""
+EXTRA_SUFFIX=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --dataset)    DATASET="$2"; shift 2 ;;
         --shot)       FEWSHOT_K="$2"; shift 2 ;;
         --seed)       FEWSHOT_SEED="$2"; shift 2 ;;
-        --wapr)       USE_WAPR=1; shift 1 ;;
-        --kume)       USE_KUME=1; shift 1 ;;
-        --wapr-kume)  USE_WAPR=1; USE_KUME=1; shift 1 ;;
-        --kume-kvk)   USE_KUME_KVK=1; shift 1 ;;
-        --kvk-margin) KUME_KVK_MARGIN_ARG="$2"; shift 2 ;;
+        --wapr)                 USE_WAPR=1; shift 1 ;;
+        --hardneg)              USE_HARDNEG=1; shift 1 ;;
+        --hardneg-cache)        HARDNEG_CACHE_ARG="$2"; shift 2 ;;
+        --hardneg-weight)       HARDNEG_WEIGHT_ARG="$2"; shift 2 ;;
+        --hardneg-no-novel)     HARDNEG_TARGET_NOVEL_ARG="False"; shift 1 ;;
+        --hardneg-no-unk)       HARDNEG_TARGET_UNK_ARG="False"; shift 1 ;;
         --gpus)       NUM_GPUS="$2"; shift 2 ;;
         --threshold)  THRESHOLD="$2"; shift 2 ;;
         --config)     CONFIG_OVERRIDE="$2"; shift 2 ;;
         --t1-ckpt)    T1_CKPT_OVERRIDE="$2"; shift 2 ;;
         --alpha)      TAL_ALPHA="$2"; shift 2 ;;
         --beta)       TAL_BETA="$2"; shift 2 ;;
+        --suffix)     EXTRA_SUFFIX="$2"; shift 2 ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: sbatch scripts/train_owod_l_t2.sbatch --dataset DATASET [--shot K] [--seed S] [--wapr|--kume|--wapr-kume] [--gpus N] [--threshold T] [--config PATH] [--t1-ckpt PATH] [--alpha A] [--beta B]"
+            echo "Usage: sbatch scripts/train_owod_l_t2.sbatch --dataset DATASET [--shot K] [--seed S] [--wapr|--hardneg] [--hardneg-weight W] [--hardneg-no-novel] [--hardneg-no-unk] [--gpus N] [--threshold T] [--config PATH] [--t1-ckpt PATH] [--alpha A] [--beta B] [--suffix S]"
             exit 1
             ;;
     esac
@@ -82,6 +91,11 @@ if [ -z "$DATASET" ]; then
     echo "ERROR: --dataset is required."
     echo "Usage: sbatch scripts/train_owod_l_t2.sbatch --dataset DATASET"
     echo "Available datasets: nuOWODB, IDD, FOOD_VOC, FOOD_VOCCOCO"
+    exit 1
+fi
+
+if [ "$USE_HARDNEG" -eq 1 ] && [ "$USE_WAPR" -eq 1 ]; then
+    echo "ERROR: --hardneg is run standalone (vanilla T2 + contrastive hardneg). Do not combine with WAPR."
     exit 1
 fi
 
@@ -114,14 +128,8 @@ DATASET_LOWER=$(echo "$DATASET" | tr '[:upper:]' '[:lower:]')
 
 case $DATASET in
     nuOWODB)
-        # nuOWODB T2 fewshot — uses dedicated T2 config (NOT the default OWOD T2 config).
-        # Fewshot split: data/OWOD/nuowodb_fewshot_tfa/seed{S}/box_{K}shot_{cls}_train.txt
-        # Embeddings: nuowodb_t2.npy (17 classes, human-readable CLIP prompts from Table 11)
-        # Anchor: nuowodb_object_tuned.npy (extracted from nuOWODB T1 checkpoint)
         if [ -n "$CONFIG_OVERRIDE" ]; then
             CONFIG="$CONFIG_OVERRIDE"
-        elif [ "$USE_KUME_KVK" -eq 1 ]; then
-            CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_nuowodb_t2_kume_kvk.py
         else
             CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_nuowodb_t2.py
         fi
@@ -132,11 +140,8 @@ case $DATASET in
     IDD)
         if [ -n "$CONFIG_OVERRIDE" ]; then
             CONFIG="$CONFIG_OVERRIDE"
-        elif [ "$USE_KUME_KVK" -eq 1 ]; then
-            CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2_kume_kvk.py
-        elif [ "$USE_KUME" -eq 1 ]; then
-            # kume config now includes wapr dict — covers both --kume and --wapr --kume
-            CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2_kume.py
+        elif [ "$USE_HARDNEG" -eq 1 ]; then
+            CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2_hardneg.py
         elif [ "$USE_WAPR" -eq 1 ]; then
             CONFIG=configs/owod_ft/${STEM}_idd_wapr.py
         else
@@ -186,22 +191,26 @@ fi
 
 # T2 directories
 METHOD_SUFFIX=""
-if [ "$USE_KUME_KVK" -eq 1 ]; then
-    # Resolve effective margin: --kvk-margin arg > env var > default 0.5
-    if [ -n "$KUME_KVK_MARGIN_ARG" ]; then
-        export KUME_KVK_MARGIN="$KUME_KVK_MARGIN_ARG"
-    fi
-    EFFECTIVE_MARGIN="${KUME_KVK_MARGIN:-0.5}"
-    METHOD_SUFFIX="_kume_kvk_m${EFFECTIVE_MARGIN}"
-elif [ "$USE_KUME" -eq 1 ] && [ "$USE_WAPR" -eq 1 ]; then
-    METHOD_SUFFIX="_wapr_kume"
-elif [ "$USE_KUME" -eq 1 ]; then
-    METHOD_SUFFIX="_kume"
-elif [ "$USE_WAPR" -eq 1 ]; then
+if [ "$USE_WAPR" -eq 1 ]; then
     METHOD_SUFFIX="_wapr"
 fi
+if [ "$USE_HARDNEG" -eq 1 ]; then
+    HW_TAG=$(echo "${HARDNEG_WEIGHT_ARG:-1.0}" | sed 's/\./p/g')
+    HN_TARGET_TAG=""
+    if [ "$HARDNEG_TARGET_NOVEL_ARG" = "False" ] && [ "$HARDNEG_TARGET_UNK_ARG" != "False" ]; then
+        HN_TARGET_TAG="_unkonly"
+    elif [ "$HARDNEG_TARGET_UNK_ARG" = "False" ] && [ "$HARDNEG_TARGET_NOVEL_ARG" != "False" ]; then
+        HN_TARGET_TAG="_novelonly"
+    fi
+    METHOD_SUFFIX="${METHOD_SUFFIX}_hardneg_w${HW_TAG}${HN_TARGET_TAG}"
+fi
+METHOD_SUFFIX="${METHOD_SUFFIX}${EXTRA_SUFFIX}"
 T2_WORK_DIR=work_dirs/${STEM}_${DATASET_LOWER}_train_task2_${FEWSHOT_K}shot_seed${FEWSHOT_SEED}${METHOD_SUFFIX}
 T2_EVAL_DIR=work_dirs/eval_${DATASET}_L_test_task2_${FEWSHOT_K}shot_seed${FEWSHOT_SEED}${METHOD_SUFFIX}
+FEWSHOT_SCOPE_ENV=novel
+if [ "$USE_HARDNEG" -eq 1 ]; then
+    FEWSHOT_SCOPE_ENV=all_known
+fi
 
 echo "=========================================="
 echo "YOLO-UniOW-L  T2 FEW-SHOT FINETUNING"
@@ -214,12 +223,11 @@ echo "Configuration:"
 echo "  Dataset:       $DATASET"
 echo "  Task:          2 (Few-shot finetuning)"
 echo "  WAPR:          $USE_WAPR"
-echo "  KUME:          $USE_KUME"
-echo "  KUME-KVK:      $USE_KUME_KVK${USE_KUME_KVK:+ (margin=${KUME_KVK_MARGIN:-0.5})}"
+echo "  HardNeg:       $USE_HARDNEG"
 echo "  Config:        $CONFIG"
 echo "  TAL alpha:     ${TAL_ALPHA:-0.5 (default)}"
 echo "  TAL beta:      ${TAL_BETA:-6.0 (default)}"
-echo "  Few-shot:      k=${FEWSHOT_K}, seed=${FEWSHOT_SEED}"
+echo "  Few-shot:      k=${FEWSHOT_K}, seed=${FEWSHOT_SEED}, scope=${FEWSHOT_SCOPE_ENV}"
 echo "  Fewshot dir:   $FEWSHOT_DIR"
 echo "  T1 checkpoint: ${T1_BEST:-<not found>}"
 echo "  GPUs:          $NUM_GPUS"
@@ -319,8 +327,30 @@ echo "  fewshot:    k=${FEWSHOT_K}, seed=${FEWSHOT_SEED}, dir=${FEWSHOT_DIR}"
 echo "  Started at: $(date)"
 echo "=========================================="
 
+if [ "$USE_HARDNEG" -eq 1 ]; then
+    HARDNEG_CACHE_PATH_EFFECTIVE="${HARDNEG_CACHE_ARG:-cache/${DATASET_LOWER}/hardneg_t1_o2o_10x8x3.pt}"
+    HARDNEG_WEIGHT_EFFECTIVE="${HARDNEG_WEIGHT_ARG:-1.0}"
+    if [ ! -f "$HARDNEG_CACHE_PATH_EFFECTIVE" ]; then
+        echo "ERROR: hardneg cache not found at $HARDNEG_CACHE_PATH_EFFECTIVE"
+        echo "  Build it first via scripts/experiment/collect_hardneg_idd.sbatch (IDD) or equivalent."
+        exit 1
+    fi
+    export HARDNEG_CACHE_PATH="$HARDNEG_CACHE_PATH_EFFECTIVE"
+    export HARDNEG_WEIGHT="$HARDNEG_WEIGHT_EFFECTIVE"
+    if [ -n "$HARDNEG_TARGET_NOVEL_ARG" ]; then
+        export HARDNEG_TARGET_NOVEL="$HARDNEG_TARGET_NOVEL_ARG"
+    fi
+    if [ -n "$HARDNEG_TARGET_UNK_ARG" ]; then
+        export HARDNEG_TARGET_UNK="$HARDNEG_TARGET_UNK_ARG"
+    fi
+    echo "HardNeg cache:        $HARDNEG_CACHE_PATH"
+    echo "HardNeg weight:       $HARDNEG_WEIGHT"
+    echo "HardNeg target_unk:   ${HARDNEG_TARGET_UNK:-True (default)}"
+    echo "HardNeg target_novel: ${HARDNEG_TARGET_NOVEL:-True (default)}"
+fi
+
 DATASET=${DATASET} TASK=2 THRESHOLD=${THRESHOLD} SAVE=False \
-    FEWSHOT_K=${FEWSHOT_K} FEWSHOT_SEED=${FEWSHOT_SEED} FEWSHOT_DIR=${FEWSHOT_DIR} \
+    FEWSHOT_K=${FEWSHOT_K} FEWSHOT_SEED=${FEWSHOT_SEED} FEWSHOT_DIR=${FEWSHOT_DIR} FEWSHOT_SCOPE=${FEWSHOT_SCOPE_ENV} \
     PORT=${MASTER_PORT} \
     ./tools/dist_train_owod.sh ${CONFIG} ${NUM_GPUS} \
     --amp \
@@ -356,7 +386,7 @@ echo "  Started at: $(date)"
 echo "=========================================="
 
 DATASET=${DATASET} TASK=2 THRESHOLD=${THRESHOLD} SAVE=True \
-    FEWSHOT_DIR=${FEWSHOT_DIR} \
+    FEWSHOT_DIR=${FEWSHOT_DIR} FEWSHOT_SCOPE=${FEWSHOT_SCOPE_ENV} \
     PORT=${MASTER_PORT} \
     ./tools/dist_test.sh ${CONFIG} ${T2_BEST} ${NUM_GPUS} \
     --work-dir ${T2_EVAL_DIR}

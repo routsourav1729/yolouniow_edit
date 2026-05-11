@@ -52,6 +52,7 @@ class YOLOv10WorldHeadModule(YOLOv10HeadModule):
                 n_base=visual_cache_cfg['n_base'],
                 n_novel=visual_cache_cfg['n_novel'],
                 embed_dim=embed_dims,
+                num_levels=self.num_levels,
                 reduce=visual_cache_cfg.get('reduce', 'mean'),
                 topk=visual_cache_cfg.get('topk', 3))
             self.visual_alpha = float(visual_alpha)
@@ -312,9 +313,12 @@ class YOLOv10WorldHeadModule(YOLOv10HeadModule):
         if self.training:
             self._cached_cls_logits_one2one = []
             self._cached_cls_embeds_one2one = []
+            self._cached_bbox_preds_one2one = []
         txt_feats = [txt_feats for _ in range(self.num_levels)]
         return multi_apply(self.one2one_forward_single, img_feats, txt_feats,
-                           self.one2one_cls_preds, self.one2one_reg_preds, self.one2one_cls_contrasts)
+                           self.one2one_cls_preds, self.one2one_reg_preds,
+                           self.one2one_cls_contrasts,
+                           list(range(self.num_levels)))
 
     def one2many_forward_single(self, img_feat: torch.Tensor, txt_feat: torch.Tensor,
                                 cls_pred: nn.ModuleList, reg_pred: nn.ModuleList,
@@ -348,7 +352,8 @@ class YOLOv10WorldHeadModule(YOLOv10HeadModule):
 
     def one2one_forward_single(self, img_feat: torch.Tensor, txt_feat: torch.Tensor,
                                 cls_pred: nn.ModuleList, reg_pred: nn.ModuleList,
-                                cls_contrast: nn.ModuleList) -> Tuple:
+                                cls_contrast: nn.ModuleList,
+                                level: int = 0) -> Tuple:
         """Forward feature of a single scale level."""
         b, _, h, w = img_feat.shape
         cls_embed = cls_pred(img_feat)
@@ -359,16 +364,23 @@ class YOLOv10WorldHeadModule(YOLOv10HeadModule):
         else:
             vc = self.visual_cache
             if vc is not None and vc.has_cache and self.visual_alpha != 0.0:
-                # Same BN-normalized space the text branch consumes inside
-                # cls_contrast.forward — guarantees feature-space match with cache.
+                # Per-level prototype ensemble.
+                #   text_logit_c   = s · <BN(g), L2(t_c)>      + b
+                #   visual_logit_c = s · <BN(g), prototype_c>  + b   (same form)
+                #   fused_c        = (1-α)·text_logit_c + α·visual_logit_c
+                # Convex combination → α=0.5 is a true average. Same scale/bias
+                # on both terms so α actually controls the mixture.
                 bn_embed = cls_contrast.norm(cls_embed)
-                visual_cos = vc(bn_embed)                        # (B,n_novel,h,w)
+                dot, mask = vc.forward_level(bn_embed, level)        # raw inner product
                 scale = cls_contrast.logit_scale.exp()
-                bias = cls_contrast.bias
-                visual_logit = scale * visual_cos + bias
+                visual_logit = scale * dot + cls_contrast.bias       # (B,n_novel,h,w)
                 novel = slice(vc.n_base, vc.n_base + vc.n_novel)
-                cls_logit[:, novel] = (
-                    cls_logit[:, novel] + self.visual_alpha * visual_logit)
+                text_logit = cls_logit[:, novel]
+                a = self.visual_alpha
+                fused = (1.0 - a) * text_logit + a * visual_logit
+                # Keep text-only for classes without a prototype at this level.
+                cls_logit[:, novel] = torch.where(
+                    mask[None, :, None, None], fused, text_logit)
 
         # cls_logit[:, self.num_classes-1:self.num_classes] = torch.amax(cls_logit[:, self.num_classes-1:], dim=1, keepdim=True)
         # cls_logit = cls_logit[:, :self.num_classes]
@@ -387,6 +399,7 @@ class YOLOv10WorldHeadModule(YOLOv10HeadModule):
             bbox_preds = bbox_dist_preds
         
         if self.training:
+            self._cached_bbox_preds_one2one.append(bbox_preds.detach())
             return cls_logit, bbox_preds, bbox_dist_preds
         else:
             return cls_logit, bbox_preds
