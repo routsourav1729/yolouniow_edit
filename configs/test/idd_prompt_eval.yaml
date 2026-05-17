@@ -9,7 +9,7 @@ experiment_tag: idd_auroc_v1
 
 # ── Model + checkpoints ──────────────────────────────────────────────────────
 model_config: configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2.py
-checkpoint:   work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_train_task2_10shot_seed1_wapr_kume/best_owod_Both_epoch_40.pth
+checkpoint:   work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_train_task2_10shot_seed1/best_owod_Both_epoch_40.pth
 
 text_encoder_pretrain_ckpt: pretrained/yolo_uniow_l_lora_bn_5e-4_100e_8gpus_obj365v1_goldg_train_lvis_minival.pth
 text_encoder_model_name:    openai/clip-vit-base-patch32

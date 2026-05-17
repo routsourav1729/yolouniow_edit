@@ -293,7 +293,7 @@ class YOLOv10WorldHeadModule(YOLOv10HeadModule):
         if self.training:
             self._cached_cls_logits_one2many = []
             self._cached_cls_embeds_one2many = []
-            self._cached_txt_feats = txt_feats.detach()  # (B, K, C) for WAPR cosine sim
+            self._cached_txt_feats = txt_feats.detach()
         txt_feats = [txt_feats for _ in range(self.num_levels)]
         return multi_apply(self.one2many_forward_single, img_feats, txt_feats,
                            self.one2many_cls_preds, self.one2many_reg_preds, self.one2many_cls_contrasts)
@@ -329,9 +329,6 @@ class YOLOv10WorldHeadModule(YOLOv10HeadModule):
         cls_logit = cls_contrast(cls_embed, txt_feat)
         if self.training:
             self._cached_cls_logits_one2many.append(cls_logit.detach())
-            # Cache BN(cls_embed) — not raw cls_embed — for WAPR cosine sim.
-            # Raw cls_embed is dominated by running_mean (SNR~3.6%), making
-            # cosine sim useless. BN centering removes the common component.
             self._cached_cls_embeds_one2many.append(cls_contrast.norm(cls_embed).detach())
         bbox_dist_preds = reg_pred(img_feat)
         

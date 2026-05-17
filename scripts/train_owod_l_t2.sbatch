@@ -1,15 +1,15 @@
 #!/bin/bash
 #SBATCH --job-name=uniow_l_t2
-#SBATCH --output=slurm_logs/owod_l_t2_%j.out
-#SBATCH --error=slurm_logs/owod_l_t2_%j.err
-#SBATCH --partition=l40
-#SBATCH --qos=l40
+#SBATCH --output=/dev/null
+#SBATCH --error=/dev/null
+#SBATCH --partition=a40
+#SBATCH --qos=a40
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
 #SBATCH --mem=128G
-#SBATCH --time=01:30:00
+#SBATCH --time=03:00:00
 
 # ============================================================================
 # YOLO-UniOW-L  Parameterized OWOD — Task 2 (Few-Shot Novel Class Finetuning)
@@ -28,7 +28,7 @@
 # Optional arguments:
 #   --shot K              Number of shots per novel class (default: 10)
 #   --seed S              Fewshot seed index (default: 1)
-#   --wapr                Enable WAPR
+#   --fedbce              Enable first FedBCE ablation (k-shot base negatives + novel positives)
 #   --hardneg             Enable contrastive hardneg from T1 cache (forces FEWSHOT_SCOPE=all_known)
 #   --hardneg-cache PATH  Override hardneg cache .pt path
 #   --hardneg-weight W    Hardneg loss weight (default: 1.0)
@@ -40,14 +40,15 @@
 #   --t1-ckpt PATH        Override T1 best checkpoint path (auto-detected by default)
 #   --alpha A             TAL assigner cls-score exponent (default: 0.5, try 0.25)
 #   --beta B              TAL assigner IoU exponent (default: 6.0, try 8.0)
-#   --suffix S            Extra suffix appended to T2 work/eval dirs
+#   --suffix S            Extra suffix appended to T2 work/eval dirs and log names
+#   --final-eval          Run an extra post-training test pass (default: off)
 # ============================================================================
 
 # ─── Parse arguments ─────────────────────────────────────────────────────────
 DATASET=""
 FEWSHOT_K=10
 FEWSHOT_SEED=1
-USE_WAPR=0
+USE_FEDBCE=0
 USE_HARDNEG=0
 HARDNEG_CACHE_ARG=""
 HARDNEG_WEIGHT_ARG=""
@@ -60,13 +61,14 @@ T1_CKPT_OVERRIDE=""
 TAL_ALPHA=""
 TAL_BETA=""
 EXTRA_SUFFIX=""
+RUN_FINAL_EVAL=0
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --dataset)    DATASET="$2"; shift 2 ;;
         --shot)       FEWSHOT_K="$2"; shift 2 ;;
         --seed)       FEWSHOT_SEED="$2"; shift 2 ;;
-        --wapr)                 USE_WAPR=1; shift 1 ;;
+        --fedbce)               USE_FEDBCE=1; shift 1 ;;
         --hardneg)              USE_HARDNEG=1; shift 1 ;;
         --hardneg-cache)        HARDNEG_CACHE_ARG="$2"; shift 2 ;;
         --hardneg-weight)       HARDNEG_WEIGHT_ARG="$2"; shift 2 ;;
@@ -79,13 +81,49 @@ while [[ $# -gt 0 ]]; do
         --alpha)      TAL_ALPHA="$2"; shift 2 ;;
         --beta)       TAL_BETA="$2"; shift 2 ;;
         --suffix)     EXTRA_SUFFIX="$2"; shift 2 ;;
+        --final-eval) RUN_FINAL_EVAL=1; shift 1 ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: sbatch scripts/train_owod_l_t2.sbatch --dataset DATASET [--shot K] [--seed S] [--wapr|--hardneg] [--hardneg-weight W] [--hardneg-no-novel] [--hardneg-no-unk] [--gpus N] [--threshold T] [--config PATH] [--t1-ckpt PATH] [--alpha A] [--beta B] [--suffix S]"
+            echo "Usage: sbatch scripts/train_owod_l_t2.sbatch --dataset DATASET [--shot K] [--seed S] [--fedbce|--hardneg] [--hardneg-weight W] [--hardneg-no-novel] [--hardneg-no-unk] [--gpus N] [--threshold T] [--config PATH] [--t1-ckpt PATH] [--alpha A] [--beta B] [--suffix S] [--final-eval]"
             exit 1
             ;;
     esac
 done
+
+# ─── Route logs directly to dataset subfolder ────────────────────────────────
+DATASET_FOR_LOG=${DATASET:-unknown}
+DATASET_LOG_LOWER=$(echo "$DATASET_FOR_LOG" | tr '[:upper:]' '[:lower:]')
+case "$DATASET_FOR_LOG" in
+    nuOWODB)       _LOG_SUBDIR=slurm_logs/nuscenes ;;
+    IDD)           _LOG_SUBDIR=slurm_logs/idd ;;
+    FOOD_VOCCOCO)  _LOG_SUBDIR=slurm_logs/voccoco ;;
+    FOOD_VOC)      _LOG_SUBDIR=slurm_logs/voc ;;
+    *)             _LOG_SUBDIR=slurm_logs/${DATASET_LOG_LOWER} ;;
+esac
+METHOD_NAME=vanilla
+if [ "$USE_FEDBCE" -eq 1 ]; then
+    METHOD_NAME=fedbce
+fi
+if [ "$USE_HARDNEG" -eq 1 ]; then
+    if [ "$METHOD_NAME" = "vanilla" ]; then
+        METHOD_NAME=hardneg
+    else
+        METHOD_NAME="${METHOD_NAME}_hardneg"
+    fi
+fi
+_LOG_SUBDIR="${_LOG_SUBDIR}/${METHOD_NAME}"
+LOG_SUFFIX=$(printf '%s' "${EXTRA_SUFFIX}" | sed 's/^_//' | tr -c '[:alnum:]_.-' '_')
+if [ -n "$LOG_SUFFIX" ]; then
+    RUN_TAG="${DATASET_LOG_LOWER}_t2_${METHOD_NAME}_${LOG_SUFFIX}"
+else
+    RUN_TAG="${DATASET_LOG_LOWER}_t2_${METHOD_NAME}"
+fi
+mkdir -p "$_LOG_SUBDIR"
+LOG_OUT="${_LOG_SUBDIR}/${RUN_TAG}_${SLURM_JOB_ID}.out"
+LOG_ERR="${_LOG_SUBDIR}/${RUN_TAG}_${SLURM_JOB_ID}.err"
+exec > >(tee -a "$LOG_OUT") 2> >(tee -a "$LOG_ERR" >&2)
+echo "[Log] ${LOG_OUT}"
+echo "[Err] ${LOG_ERR}"
 
 if [ -z "$DATASET" ]; then
     echo "ERROR: --dataset is required."
@@ -94,8 +132,8 @@ if [ -z "$DATASET" ]; then
     exit 1
 fi
 
-if [ "$USE_HARDNEG" -eq 1 ] && [ "$USE_WAPR" -eq 1 ]; then
-    echo "ERROR: --hardneg is run standalone (vanilla T2 + contrastive hardneg). Do not combine with WAPR."
+if [ "$USE_FEDBCE" -eq 1 ] && [ "$USE_HARDNEG" -eq 1 ]; then
+    echo "ERROR: --fedbce is the first isolated ablation. Do not combine with HardNeg."
     exit 1
 fi
 
@@ -109,19 +147,6 @@ if [ -n "$TAL_ALPHA" ] || [ -n "$TAL_BETA" ]; then
     TAL_CFG_OPTIONS="model.train_cfg.one2many_assigner.alpha=${_A} model.train_cfg.one2many_assigner.beta=${_B} model.train_cfg.one2one_assigner.alpha=${_A} model.train_cfg.one2one_assigner.beta=${_B}"
 fi
 
-# ─── Route logs to dataset subfolder ─────────────────────────────────────────
-case "$DATASET" in
-    nuOWODB)       _LOG_SUBDIR=slurm_logs/nuscenes ;;
-    IDD)           _LOG_SUBDIR=slurm_logs/idd ;;
-    FOOD_VOCCOCO)  _LOG_SUBDIR=slurm_logs/voccoco ;;
-    FOOD_VOC)      _LOG_SUBDIR=slurm_logs/voc ;;
-    *)             _LOG_SUBDIR=slurm_logs/$(echo "$DATASET" | tr '[:upper:]' '[:lower:]') ;;
-esac
-mkdir -p "$_LOG_SUBDIR"
-ln -sf "../owod_l_t2_${SLURM_JOB_ID}.out" "${_LOG_SUBDIR}/owod_l_t2_${SLURM_JOB_ID}.out" 2>/dev/null || true
-ln -sf "../owod_l_t2_${SLURM_JOB_ID}.err" "${_LOG_SUBDIR}/owod_l_t2_${SLURM_JOB_ID}.err" 2>/dev/null || true
-echo "[Log] ${_LOG_SUBDIR}/owod_l_t2_${SLURM_JOB_ID}.{out,err}"
-
 # ─── Dataset-specific configuration ──────────────────────────────────────────
 STEM=yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod
 DATASET_LOWER=$(echo "$DATASET" | tr '[:upper:]' '[:lower:]')
@@ -130,6 +155,8 @@ case $DATASET in
     nuOWODB)
         if [ -n "$CONFIG_OVERRIDE" ]; then
             CONFIG="$CONFIG_OVERRIDE"
+        elif [ "$USE_FEDBCE" -eq 1 ]; then
+            CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_nuowodb_t2_fedbce.py
         else
             CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_nuowodb_t2.py
         fi
@@ -140,10 +167,10 @@ case $DATASET in
     IDD)
         if [ -n "$CONFIG_OVERRIDE" ]; then
             CONFIG="$CONFIG_OVERRIDE"
+        elif [ "$USE_FEDBCE" -eq 1 ]; then
+            CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2_fedbce.py
         elif [ "$USE_HARDNEG" -eq 1 ]; then
             CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2_hardneg.py
-        elif [ "$USE_WAPR" -eq 1 ]; then
-            CONFIG=configs/owod_ft/${STEM}_idd_wapr.py
         else
             CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2.py
         fi
@@ -154,8 +181,6 @@ case $DATASET in
     FOOD_VOC)
         if [ -n "$CONFIG_OVERRIDE" ]; then
             CONFIG="$CONFIG_OVERRIDE"
-        elif [ "$USE_WAPR" -eq 1 ]; then
-            CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_5e_8gpus_owod_food_voc_t2_wapr.py
         else
             CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_80e_8gpus_owod_food_voc_t2.py
         fi
@@ -166,8 +191,6 @@ case $DATASET in
     FOOD_VOCCOCO)
         if [ -n "$CONFIG_OVERRIDE" ]; then
             CONFIG="$CONFIG_OVERRIDE"
-        elif [ "$USE_WAPR" -eq 1 ]; then
-            CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_80e_8gpus_owod_food_voccoco_t2_wapr.py
         else
             CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_80e_8gpus_owod_food_voccoco_t2.py
         fi
@@ -191,8 +214,8 @@ fi
 
 # T2 directories
 METHOD_SUFFIX=""
-if [ "$USE_WAPR" -eq 1 ]; then
-    METHOD_SUFFIX="_wapr"
+if [ "$USE_FEDBCE" -eq 1 ]; then
+    METHOD_SUFFIX="_fedbce"
 fi
 if [ "$USE_HARDNEG" -eq 1 ]; then
     HW_TAG=$(echo "${HARDNEG_WEIGHT_ARG:-1.0}" | sed 's/\./p/g')
@@ -208,7 +231,7 @@ METHOD_SUFFIX="${METHOD_SUFFIX}${EXTRA_SUFFIX}"
 T2_WORK_DIR=work_dirs/${STEM}_${DATASET_LOWER}_train_task2_${FEWSHOT_K}shot_seed${FEWSHOT_SEED}${METHOD_SUFFIX}
 T2_EVAL_DIR=work_dirs/eval_${DATASET}_L_test_task2_${FEWSHOT_K}shot_seed${FEWSHOT_SEED}${METHOD_SUFFIX}
 FEWSHOT_SCOPE_ENV=novel
-if [ "$USE_HARDNEG" -eq 1 ]; then
+if [ "$USE_HARDNEG" -eq 1 ] || [ "$USE_FEDBCE" -eq 1 ]; then
     FEWSHOT_SCOPE_ENV=all_known
 fi
 
@@ -222,7 +245,7 @@ echo ""
 echo "Configuration:"
 echo "  Dataset:       $DATASET"
 echo "  Task:          2 (Few-shot finetuning)"
-echo "  WAPR:          $USE_WAPR"
+echo "  FedBCE:        $USE_FEDBCE"
 echo "  HardNeg:       $USE_HARDNEG"
 echo "  Config:        $CONFIG"
 echo "  TAL alpha:     ${TAL_ALPHA:-0.5 (default)}"
@@ -235,6 +258,7 @@ echo "  Threshold:     $THRESHOLD"
 echo "  Embed dir:     $EMBED_DIR"
 echo "  T2 train dir:  $T2_WORK_DIR"
 echo "  T2 eval dir:   $T2_EVAL_DIR"
+echo "  Final eval:    $RUN_FINAL_EVAL"
 echo "=========================================="
 
 # ─── Environment ─────────────────────────────────────────────────────────────
@@ -377,19 +401,23 @@ if [ -z "$T2_BEST" ]; then
 fi
 echo "T2 best checkpoint: $T2_BEST"
 
-# ─── Task 2: Evaluation ──────────────────────────────────────────────────────
-echo "=========================================="
-echo "Running Inference / Evaluation on T2"
-echo "  checkpoint: $T2_BEST"
-echo "  eval dir:   $T2_EVAL_DIR"
-echo "  Started at: $(date)"
-echo "=========================================="
+if [ "$RUN_FINAL_EVAL" -eq 1 ]; then
+    # ─── Task 2: Optional post-training evaluation ──────────────────────────
+    echo "=========================================="
+    echo "Running Inference / Evaluation on T2"
+    echo "  checkpoint: $T2_BEST"
+    echo "  eval dir:   $T2_EVAL_DIR"
+    echo "  Started at: $(date)"
+    echo "=========================================="
 
-DATASET=${DATASET} TASK=2 THRESHOLD=${THRESHOLD} SAVE=True \
-    FEWSHOT_DIR=${FEWSHOT_DIR} FEWSHOT_SCOPE=${FEWSHOT_SCOPE_ENV} \
-    PORT=${MASTER_PORT} \
-    ./tools/dist_test.sh ${CONFIG} ${T2_BEST} ${NUM_GPUS} \
-    --work-dir ${T2_EVAL_DIR}
+    DATASET=${DATASET} TASK=2 THRESHOLD=${THRESHOLD} SAVE=True \
+        FEWSHOT_DIR=${FEWSHOT_DIR} FEWSHOT_SCOPE=${FEWSHOT_SCOPE_ENV} \
+        PORT=${MASTER_PORT} \
+        ./tools/dist_test.sh ${CONFIG} ${T2_BEST} ${NUM_GPUS} \
+        --work-dir ${T2_EVAL_DIR}
+else
+    echo "Skipping extra post-training eval; using the final validation metrics."
+fi
 
 echo ""
 echo "=========================================="

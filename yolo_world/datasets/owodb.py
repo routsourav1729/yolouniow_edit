@@ -49,6 +49,7 @@ class OWODDataset(BatchShapePolicyDataset, BaseDetDataset):
                  fewshot_k: int = 0,
                  fewshot_seed: int = 1,
                  fewshot_scope: str = 'novel',
+                 fewshot_cap_all_classes: bool = False,
                  **kwargs):
 
         self.images = []
@@ -70,6 +71,7 @@ class OWODDataset(BatchShapePolicyDataset, BaseDetDataset):
         self._fewshot_k = fewshot_k
         self._fewshot_seed = fewshot_seed
         self._fewshot_scope = fewshot_scope
+        self._fewshot_cap_all_classes = fewshot_cap_all_classes
         self._fewshot_allowed = {}  # img_id -> set of allowed class names
         
         self._logger = MMLogger.get_current_instance()
@@ -251,18 +253,27 @@ class OWODDataset(BatchShapePolicyDataset, BaseDetDataset):
         curr_intro = self.owod_cfg.CUR_INTRODUCED_CLS
         k = self._fewshot_k
 
-        # Count instances per novel class across all images
+        if self._fewshot_cap_all_classes and self._fewshot_scope == 'all_known':
+            cap_classes = range(0, prev_intro + curr_intro)
+            cap_desc = 'all known'
+        else:
+            cap_classes = range(prev_intro, prev_intro + curr_intro)
+            cap_desc = 'novel'
+        cap_class_set = set(cap_classes)
+
+        # Count instances per capped class across all images
         class_instance_locs = defaultdict(list)
-        # (img_idx, inst_idx) for each novel class
+        # (img_idx, inst_idx) for each capped class
         for img_idx, data_info in enumerate(data_list):
             for inst_idx, inst in enumerate(data_info.get('instances', [])):
                 lbl = inst['bbox_label']
-                if prev_intro <= lbl < prev_intro + curr_intro:
+                if lbl in cap_class_set:
                     class_instance_locs[lbl].append((img_idx, inst_idx))
 
         # Determine which (img_idx, inst_idx) to keep
         keep_set = set()
-        for lbl, locs in class_instance_locs.items():
+        for lbl in cap_classes:
+            locs = class_instance_locs.get(lbl, [])
             cls_name = self.CLASS_NAMES[lbl]
             if len(locs) > k:
                 random.seed(self._fewshot_seed)
@@ -277,16 +288,19 @@ class OWODDataset(BatchShapePolicyDataset, BaseDetDataset):
 
         # Rebuild data_list, keeping only selected instances
         new_data_list = []
+        kept_counts = defaultdict(int)
         for img_idx, data_info in enumerate(data_list):
             new_instances = []
             for inst_idx, inst in enumerate(data_info.get('instances', [])):
                 lbl = inst['bbox_label']
-                if prev_intro <= lbl < prev_intro + curr_intro:
-                    # Novel class — check if selected
+                if lbl in cap_class_set:
+                    # Capped class — check if selected
                     if (img_idx, inst_idx) in keep_set:
                         new_instances.append(inst)
+                        kept_counts[lbl] += 1
                 else:
-                    # Non-novel (shouldn't exist after OWOD filtering, but keep if present)
+                    # Non-capped class. In all_known mode this should not exist
+                    # after OWOD filtering, but keep defensively.
                     new_instances.append(inst)
             if new_instances:
                 data_info_copy = copy.copy(data_info)
@@ -296,6 +310,10 @@ class OWODDataset(BatchShapePolicyDataset, BaseDetDataset):
         self._logger.info(
             f'Few-shot cap: {len(data_list)} -> {len(new_data_list)} images '
             f'with instances')
+        kept_total = sum(kept_counts.values())
+        self._logger.info(
+            f'Few-shot cap scope={cap_desc}: kept {kept_total} capped '
+            f'instances across {len(cap_class_set)} classes')
         return new_data_list
     
     def parse_data_info(self, raw_data_info):

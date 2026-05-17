@@ -16,15 +16,13 @@
 #
 # Usage:
 #   sbatch scripts/analyze_owod_test.sbatch --dataset IDD --task 2
-#   sbatch scripts/analyze_owod_test.sbatch --dataset IDD --task 2 --method wapr
-#   sbatch scripts/analyze_owod_test.sbatch --dataset IDD --task 2 --method wapr-kume
 #   sbatch scripts/analyze_owod_test.sbatch --dataset nuOWODB --task 2
 #   sbatch scripts/analyze_owod_test.sbatch --dataset nuOWODB --task 2 --method all
 #
 # Options:
 #   --dataset         IDD | FOOD_VOCCOCO | FOOD_VOC | nuOWODB
 #   --task            1 | 2
-#   --method          baseline | wapr | kume | wapr-kume | all  (default: baseline)
+#   --method          baseline | kume | kume-kvk | all  (default: baseline)
 #                     'all' = run every available checkpoint in one job (data loads once)
 #   --checkpoint      Override checkpoint path
 #   --config          Override config file path
@@ -86,17 +84,15 @@ export DATASET TASK
 
 # ─── Resolve method suffix ────────────────────────────────────────────────
 case "$METHOD" in
-    wapr-kume)   METHOD_SUFFIX="_wapr_kume" ;;
     kume)        METHOD_SUFFIX="_kume" ;;
     kume-kvk)
         # Margin from env KUME_KVK_MARGIN (default 0.5). Workdir suffix encodes margin.
         _M="${KUME_KVK_MARGIN:-0.5}"
         METHOD_SUFFIX="_kume_kvk_m${_M}"
         ;;
-    wapr)        METHOD_SUFFIX="_wapr" ;;
     baseline|"") METHOD_SUFFIX="" ;;
     all)         METHOD_SUFFIX="" ;;   # resolved per-entry in all mode
-    *)           echo "ERROR: Unknown --method '$METHOD'. Use: baseline wapr kume kume-kvk wapr-kume all"; exit 1 ;;
+    *)           echo "ERROR: Unknown --method '$METHOD'. Use: baseline kume kume-kvk all"; exit 1 ;;
 esac
 
 # ─── Auto-detect config and checkpoint ────────────────────────────────────
@@ -111,12 +107,10 @@ case $DATASET in
         if [ -z "$CONFIG" ]; then
             if [ "$TASK" -eq 1 ]; then
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd.py
-            elif [ "$METHOD" = "wapr-kume" ] || [ "$METHOD" = "kume" ]; then
+            elif [ "$METHOD" = "kume" ]; then
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2_kume.py
             elif [ "$METHOD" = "kume-kvk" ]; then
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2_kume_kvk.py
-            elif [ "$METHOD" = "wapr" ]; then
-                CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_wapr.py
             else
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2.py
             fi
@@ -129,8 +123,6 @@ case $DATASET in
         if [ -z "$CONFIG" ]; then
             if [ "$TASK" -eq 1 ]; then
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_food_voccoco.py
-            elif [ "$METHOD" = "wapr" ] || [ "$METHOD" = "wapr-kume" ]; then
-                CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_80e_8gpus_owod_food_voccoco_t2_wapr.py
             else
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_80e_8gpus_owod_food_voccoco_t2.py
             fi
@@ -143,8 +135,6 @@ case $DATASET in
         if [ -z "$CONFIG" ]; then
             if [ "$TASK" -eq 1 ]; then
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_food_voc.py
-            elif [ "$METHOD" = "wapr" ] || [ "$METHOD" = "wapr-kume" ]; then
-                CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_5e_8gpus_owod_food_voc_t2_wapr.py
             else
                 CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_80e_8gpus_owod_food_voc_t2.py
             fi
@@ -222,23 +212,17 @@ if [ "$METHOD" = "all" ]; then
         IDD)
             METHOD_DEFS=(
                 "baseline|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2.py|"
-                "wapr|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_wapr.py|_wapr"
                 "kume|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2_kume.py|_kume"
-                "wapr-kume|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2_kume.py|_wapr_kume"
             )
             ;;
         FOOD_VOCCOCO)
             METHOD_DEFS=(
                 "baseline|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_80e_8gpus_owod_food_voccoco_t2.py|"
-                "wapr|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_80e_8gpus_owod_food_voccoco_t2_wapr.py|_wapr"
-                "wapr-kume|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_80e_8gpus_owod_food_voccoco_t2_wapr.py|_wapr_kume"
             )
             ;;
         FOOD_VOC)
             METHOD_DEFS=(
                 "baseline|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_80e_8gpus_owod_food_voc_t2.py|"
-                "wapr|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_5e_8gpus_owod_food_voc_t2_wapr.py|_wapr"
-                "wapr-kume|configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_5e_8gpus_owod_food_voc_t2_wapr.py|_wapr_kume"
             )
             ;;
         nuOWODB)

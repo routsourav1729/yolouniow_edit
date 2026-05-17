@@ -1,6 +1,6 @@
 _base_ = ['yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_food_voccoco.py']
 
-# FOOD VOC-COCO — T2 few-shot fine-tuning config (no WAPR).
+# FOOD VOC-COCO — T2 few-shot fine-tuning config.
 # Scaling rationale vs FOOD_VOC T2:
 #   FOOD_VOC:     5 novel classes, ~50 fewshot instances → 20 epochs, val/5
 #   FOOD_VOCCOCO: 20 novel classes, ~200 fewshot instances → 80 epochs, val/10

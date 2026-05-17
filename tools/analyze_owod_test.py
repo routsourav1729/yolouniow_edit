@@ -36,10 +36,10 @@ MODES
   Single checkpoint (existing):
     python analyze_owod_test.py --config C --checkpoint K --out-dir D [...]
 
-  Multi checkpoint (data loads once, N checkpoints share each batch):
+    Multi checkpoint (data loads once, N checkpoints share each batch):
     python analyze_owod_test.py --runs-json runs.json [--num-images N] [--conf-thr T] [--batch-size B]
     runs.json = [{"label":"t2_baseline","config":"...","checkpoint":"...","out_dir":"..."},
-                 {"label":"t2_wapr","config":"...","checkpoint":"...","out_dir":"..."}]
+                 {"label":"t2_fedbce","config":"...","checkpoint":"...","out_dir":"..."}]
     All runs must share the same DATASET / TASK env vars (same test split).
 
 OUTPUTS  (per run, under its out_dir)

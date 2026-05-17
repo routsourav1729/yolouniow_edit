@@ -15,8 +15,8 @@ Colour scheme
 
 Usage (from YOLO-UniOW root, on a GPU node):
     python utils/visualize_owod.py \\
-        --config configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_wapr.py \\
-        --checkpoint work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_train_task2_10shot_wapr/best_owod_Both_epoch_40.pth \\
+        --config configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2.py \\
+        --checkpoint work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_train_task2_10shot_seed1/best_owod_Both_epoch_40.pth \\
         --image-ids 080222 080221 080223 010153 000090
 
 Or via sbatch:
@@ -317,7 +317,7 @@ def main():
                         known_classes, novel_classes,
                         args.threshold, args.unk_threshold,
                         args.box_thickness, args.font_scale)
-        pred_img = add_title(pred_img, 'Prediction (YOLO-UniOW WAPR)')
+        pred_img = add_title(pred_img, 'Prediction (YOLO-UniOW)')
 
         # Side-by-side: 3px white separator
         H = gt_img.shape[0]

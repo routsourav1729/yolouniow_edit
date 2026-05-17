@@ -77,15 +77,6 @@ The classification loss for these anchors pulls T_unk's output up in proportion 
 
 This runs every batch — the candidate set changes each step as the model evolves. It is NOT a one-time precomputation.
 
-In T2 (WAPR): Instead of the raw anchor score as the target, the soft target becomes:
-
-$$
-w_r \cdot \sigma(\text{logit}_{T_{anchor}}),\qquad w_r = 1 - \frac{\max_k(\hat{p}_k)}{\sigma(\text{logit}_{T_{anchor}})}
-$$
-
-Anchors where the max known score is close to the anchor score ($w_r \approx 0$) get near-zero unknown gradient — they are probably unannotated known objects.
-
-
 YOLO-UniOW: Inference
 
 At test time:

@@ -27,7 +27,7 @@ export PYTHONUNBUFFERED=1
 cd /home/agipml/sourav.rout/ALL_FILES/hypyolo/YOLO-UniOW
 mkdir -p slurm_logs/experiment probe_out/tunk_diagnostic
 
-VARIANT="wapr"
+VARIANT="plain"
 SHOT=10
 SEED=1
 NUM_IMAGES=5000
@@ -52,9 +52,7 @@ done
 
 case "$VARIANT" in
     plain) SUFFIX="" ;;
-    wapr)  SUFFIX="_wapr" ;;
     kume)  SUFFIX="_kume" ;;
-    wapr_kume) SUFFIX="_wapr_kume" ;;
     *) SUFFIX="_${VARIANT}" ;;
 esac
 

@@ -16,27 +16,63 @@
 # ============================================================================
 #
 # Usage:
-#   sbatch scripts/eval_owod.sbatch             → T2 best checkpoint (default)
-#   sbatch scripts/eval_owod.sbatch 2           → T2 best checkpoint
-#   sbatch scripts/eval_owod.sbatch 1           → T1 best checkpoint
-#   sbatch scripts/eval_owod.sbatch 2 "" 1      → T2 + embedding diagnostic
-#   sbatch scripts/eval_owod.sbatch 2 /path.pth → custom checkpoint
-#   sbatch scripts/eval_owod.sbatch 2 /path.pth 1 → custom ckpt + diagnostic
+#   sbatch scripts/eval_owod.sbatch                         → T2 best checkpoint
+#   sbatch scripts/eval_owod.sbatch 2 /path.pth 1            → old positional form
+#   sbatch scripts/eval_owod.sbatch --task 2 --ckpt /path.pth
+#   sbatch scripts/eval_owod.sbatch --config cfg.py --ckpt /path.pth --unk-threshold 0.01
 #
 # Output: slurm_logs/eval_idd_<jobid>.out
 #   Prints per-class AP, U-Recall, A-OSE, and A-OSE per-class breakdown.
 #   If ANALYZE=1: also generates visualizations/embed_diag_t{task}/
 # ============================================================================
 
-TASK=${1:-2}
-CUSTOM_CKPT=${2:-""}
-ANALYZE=${3:-0}        # 1 = run embedding diagnostic after eval
-
 DATASET=IDD
 THRESHOLD=0.05
+UNK_THRESHOLD=""
+MODEL_SCORE_THR=""
 FEWSHOT_K=10
 FEWSHOT_SEED=1
 FEWSHOT_DIR=data/OWOD/iddsplit   # needed by config parser even at eval time
+TASK=2
+CUSTOM_CKPT=""
+ANALYZE=0        # 1 = run embedding diagnostic after eval
+CONFIG_OVERRIDE=""
+WORK_DIR_OVERRIDE=""
+EXTRA_TAG=""
+
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --task) TASK="$2"; shift 2 ;;
+        --ckpt|--checkpoint) CUSTOM_CKPT="$2"; shift 2 ;;
+        --analyze) ANALYZE=1; shift 1 ;;
+        --config) CONFIG_OVERRIDE="$2"; shift 2 ;;
+        --work-dir) WORK_DIR_OVERRIDE="$2"; shift 2 ;;
+        --threshold) THRESHOLD="$2"; shift 2 ;;
+        --score-thr|--unk-threshold) UNK_THRESHOLD="$2"; shift 2 ;;
+        --model-score-thr) MODEL_SCORE_THR="$2"; shift 2 ;;
+        --tag|--suffix) EXTRA_TAG="$2"; shift 2 ;;
+        --help|-h)
+            sed -n '1,40p' "$0"
+            exit 0
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift 1
+            ;;
+    esac
+done
+
+# Backward-compatible positional form: TASK CKPT ANALYZE
+if [ ${#POSITIONAL[@]} -gt 0 ]; then
+    TASK="${POSITIONAL[0]}"
+fi
+if [ ${#POSITIONAL[@]} -gt 1 ]; then
+    CUSTOM_CKPT="${POSITIONAL[1]}"
+fi
+if [ ${#POSITIONAL[@]} -gt 2 ]; then
+    ANALYZE="${POSITIONAL[2]}"
+fi
 
 STEM=yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod
 NUM_GPUS=${SLURM_GPUS_ON_NODE:-1}
@@ -48,8 +84,14 @@ if [ "$TASK" = "1" ]; then
     WORK_DIR=work_dirs/${STEM}_idd_train_task1
     FEWSHOT_K=0   # T1 has no few-shot; K=0 disables filtering
 else
-    CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_wapr.py
-    WORK_DIR=work_dirs/${STEM}_idd_train_task2_${FEWSHOT_K}shot_wapr
+    CONFIG=configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2.py
+    WORK_DIR=work_dirs/${STEM}_idd_train_task2_${FEWSHOT_K}shot_seed${FEWSHOT_SEED}
+fi
+if [ -n "$CONFIG_OVERRIDE" ]; then
+    CONFIG="$CONFIG_OVERRIDE"
+fi
+if [ -n "$WORK_DIR_OVERRIDE" ]; then
+    WORK_DIR="$WORK_DIR_OVERRIDE"
 fi
 
 # ─── Resolve checkpoint ───────────────────────────────────────────────────────
@@ -63,7 +105,28 @@ else
 fi
 
 CKPT_STEM=$(basename "$CKPT" .pth)
-EVAL_DIR=work_dirs/eval_IDD_L_task${TASK}_${CKPT_STEM}
+SCORE_TAG=""
+if [ -n "$UNK_THRESHOLD" ]; then
+    SCORE_TAG="_unk$(echo "$UNK_THRESHOLD" | sed 's/\./p/g')"
+fi
+LOG_TAG=$(printf '%s%s' "$EXTRA_TAG" "$SCORE_TAG" | sed 's/^_//' | tr -c '[:alnum:]_.-' '_')
+if [ -n "$LOG_TAG" ]; then
+    EVAL_DIR=work_dirs/eval_IDD_L_task${TASK}_${CKPT_STEM}_${LOG_TAG}
+else
+    EVAL_DIR=work_dirs/eval_IDD_L_task${TASK}_${CKPT_STEM}
+fi
+
+mkdir -p slurm_logs/idd/eval
+if [ -n "$LOG_TAG" ]; then
+    LOG_OUT=slurm_logs/idd/eval/eval_idd_t${TASK}_${LOG_TAG}_${SLURM_JOB_ID}.out
+    LOG_ERR=slurm_logs/idd/eval/eval_idd_t${TASK}_${LOG_TAG}_${SLURM_JOB_ID}.err
+else
+    LOG_OUT=slurm_logs/idd/eval/eval_idd_t${TASK}_${SLURM_JOB_ID}.out
+    LOG_ERR=slurm_logs/idd/eval/eval_idd_t${TASK}_${SLURM_JOB_ID}.err
+fi
+exec > >(tee -a "$LOG_OUT") 2> >(tee -a "$LOG_ERR" >&2)
+echo "[Log] $LOG_OUT"
+echo "[Err] $LOG_ERR"
 
 echo "=========================================="
 echo "YOLO-UniOW-L  IDD OWOD  — Eval only"
@@ -77,7 +140,9 @@ echo "  Config:     $CONFIG"
 echo "  Checkpoint: $CKPT"
 echo "  Eval dir:   $EVAL_DIR"
 echo "  GPUs:       $NUM_GPUS"
-echo "  Threshold:  $THRESHOLD"
+echo "  Metric known threshold: $THRESHOLD"
+echo "  Metric unknown T_unk threshold: ${UNK_THRESHOLD:-0.0}"
+echo "  Model score_thr:        ${MODEL_SCORE_THR:-<config default>}"
 echo "  Analyze:    $ANALYZE"
 echo "=========================================="
 
@@ -123,12 +188,13 @@ echo "Running inference + evaluation"
 echo "  Started at: $(date)"
 echo "=========================================="
 
-DATASET=${DATASET} TASK=${TASK} THRESHOLD=${THRESHOLD} SAVE=True \
+DATASET=${DATASET} TASK=${TASK} THRESHOLD=${THRESHOLD} UNK_THRESHOLD=${UNK_THRESHOLD:-0.0} SAVE=True \
     FEWSHOT_DIR=${FEWSHOT_DIR} FEWSHOT_K=${FEWSHOT_K} FEWSHOT_SEED=${FEWSHOT_SEED} \
     ANALYZE=${ANALYZE} \
     PORT=${MASTER_PORT} \
     ./tools/dist_test.sh ${CONFIG} ${CKPT} ${NUM_GPUS} \
-    --work-dir ${EVAL_DIR}
+    --work-dir ${EVAL_DIR} \
+    ${MODEL_SCORE_THR:+--cfg-options model.test_cfg.score_thr=${MODEL_SCORE_THR}}
 
 EVAL_RC=$?
 echo ""

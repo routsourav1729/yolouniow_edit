@@ -1,6 +1,6 @@
 # Discriminative Attribute Selection — IDD
-# Selection-only stage: forward K-shot training images through frozen baseline
-# (no KUME, no WAPR), build per-class support pools at IoU thresholds {0.7,0.8,0.9},
+# Selection-only stage: forward K-shot training images through frozen baseline,
+# build per-class support pools at IoU thresholds {0.7,0.8,0.9},
 # score 30 candidates + default name per class via cosine sim, then KDE-JS
 # discrimination with min-over-r aggregation. See tools/select_attributes.py.
 
@@ -8,7 +8,7 @@ experiment_tag: idd_v1
 dataset_key:    idd
 
 # ── Model + checkpoints ──────────────────────────────────────────────────────
-# Baseline T2 checkpoint per spec (no KUME, no WAPR).
+# Baseline T2 checkpoint per spec.
 model_config: configs/owod_ft/yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2.py
 checkpoint:   work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd_train_task2_10shot_seed1/best_owod_Both_epoch_40.pth
 

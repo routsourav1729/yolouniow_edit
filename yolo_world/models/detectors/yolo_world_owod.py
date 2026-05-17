@@ -30,7 +30,6 @@ class OWODDetector(YOLODetector):
                  embedding_mask: Union[List, int] = None,
                  freeze_prompt: bool = False,
                  use_mlp_adapter: bool = False,
-                 wapr: dict = None,
                  hardneg: dict = None,
                  **kwargs) -> None:
         self.mm_neck = mm_neck
@@ -84,25 +83,6 @@ class OWODDetector(YOLODetector):
         else:
             self.adapter = None
 
-        # WAPR: Wildcard-Aware Pseudo-label Redistribution (T2 only)
-        self.wapr = None
-        if wapr is not None:
-            from yolo_world.models.losses.wapr import WAPRModule
-            self.wapr = WAPRModule(
-                frozen_embedding_path=wapr['frozen_embedding_path'],
-                num_prev_classes=self.num_prev_classes,
-                num_known_classes=wapr.get(
-                    'num_known_classes', num_train_classes - 2),
-                warmup_epochs=wapr.get('warmup_epochs', 2),
-                anchor_loss_weight=wapr.get('anchor_loss_weight', 0.1),
-                ratio_threshold=wapr.get('ratio_threshold', 0.5),
-            )
-            self.bbox_head.wapr = self.wapr
-            print(f"[WAPR] Initialized: "
-                  f"warmup={self.wapr.warmup_epochs} epochs, "
-                  f"anchor_weight={self.wapr.anchor_loss_weight}, "
-                  f"ratio_threshold={self.wapr.ratio_threshold}")
-
         # HardNeg: Contrastive hard-negative loss using T1-cached base-positive
         # features that scored high on T_unk. Pushes T_unk and novel prompts
         # DOWN on those features. T2 only.
@@ -143,55 +123,8 @@ class OWODDetector(YOLODetector):
         img_feats, txt_feats = self.extract_feat(batch_inputs,
                                                  batch_data_samples)
 
-        # WAPR: snapshot T_unk anchor on first call
-        if self.wapr is not None and self.wapr.t_unk_anchor is None:
-            self.wapr.set_t_unk_anchor(self.embeddings[-2])
-            print(f"[WAPR] T_unk anchor snapshot saved (norm={self.embeddings[-2].norm().item():.4f})")
-
-        # WAPR: set warmup flag on head (skip gatekeeper during warmup)
-        if self.wapr is not None:
-            from mmengine.logging import MessageHub
-            try:
-                epoch = MessageHub.get_current_instance().get_info('epoch')
-            except (KeyError, RuntimeError):
-                epoch = 0
-            self.bbox_head._wapr_in_warmup = (epoch < self.wapr.warmup_epochs)
-
         losses = self.bbox_head.loss(img_feats, txt_feats,
                                         batch_data_samples)
-
-        # WAPR: add T_unk anchor drift loss and log stats
-        if self.wapr is not None:
-            anchor_loss = self.wapr.compute_anchor_loss(
-                self.embeddings[-2])
-            losses['wapr_anchor_loss'] = anchor_loss
-            # Log WAPR stats
-            wapr_stats = getattr(self.bbox_head, '_wapr_stats', {})
-            warmup = getattr(self.bbox_head, '_wapr_in_warmup', False)
-            # Print every call so user can see it's running
-            if wapr_stats:
-                print(f"[WAPR] epoch={epoch} "
-                      f"warmup={'Y' if warmup else 'N'} "
-                      f"anchor_loss={anchor_loss.item():.8f} "
-                      f"candidates={wapr_stats.get('wapr/num_candidates', 0)} "
-                      f"suppressed={wapr_stats.get('wapr/num_suppressed', 0)} "
-                      f"genuine_unk={wapr_stats.get('wapr/num_genuine_unk', 0)} "
-                      f"mean_ratio={wapr_stats.get('wapr/mean_ratio', 0):.4f} "
-                      f"std_ratio={wapr_stats.get('wapr/std_ratio', 0):.4f} "
-                      f"mean_w_r={wapr_stats.get('wapr/mean_w_r', 0):.4f}")
-            else:
-                print(f"[WAPR] epoch={epoch} "
-                      f"warmup={'Y' if warmup else 'N'} "
-                      f"anchor_loss={anchor_loss.item():.8f} "
-                      f"no redistribute stats (0 candidates or cached logits missing)")
-            # Also push to MessageHub for TensorBoard
-            if wapr_stats:
-                from mmengine.logging import MessageHub
-                hub = MessageHub.get_current_instance()
-                for k, v in wapr_stats.items():
-                    hub.update_scalar(k, v)
-                hub.update_scalar('wapr/warmup_active',
-                                  1.0 if warmup else 0.0)
 
         # HardNeg: contrastive hard-negative loss on T1-cached base-positive
         # features. Pushes T_unk + novel prompts DOWN on those features so
@@ -258,4 +191,3 @@ class OWODDetector(YOLODetector):
             else:
                 img_feats = self.neck(img_feats)
         return img_feats, txt_feats
-

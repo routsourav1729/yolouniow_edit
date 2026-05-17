@@ -19,6 +19,10 @@
 #   sbatch scripts/select_attributes.sbatch --dataset nuowodb
 #   sbatch scripts/select_attributes.sbatch --dataset idd --cache-pools
 #   sbatch scripts/select_attributes.sbatch --dataset idd --num-images 10  # smoke test
+#   sbatch scripts/select_attributes.sbatch --dataset nuscenes \
+#       --cached-pools results/attributes/nuowodb/visual_pools_iou08.pt \
+#       --cache-only --ratio-only --out-dir slurm_logs/analysis/attr_select \
+#       --class-scope current --output-prefix nuscenes_attrselect
 #
 # Outputs → results/attributes/{idd,nuowodb}/
 #   selected_top{3,5}_lambda{0.5,0.7,0.9}.json
@@ -36,12 +40,17 @@ while [[ $# -gt 0 ]]; do
         --num-images) EXTRA_ARGS="$EXTRA_ARGS --num-images $2"; shift 2;;
         --out-dir)    EXTRA_ARGS="$EXTRA_ARGS --out-dir $2"; shift 2;;
         --top-k)      EXTRA_ARGS="$EXTRA_ARGS --top-k $2"; shift 2;;
+        --cached-pools) EXTRA_ARGS="$EXTRA_ARGS --cached-pools $2"; shift 2;;
+        --cache-only) EXTRA_ARGS="$EXTRA_ARGS --cache-only"; shift;;
+        --ratio-only) EXTRA_ARGS="$EXTRA_ARGS --ratio-only"; shift;;
+        --class-scope) EXTRA_ARGS="$EXTRA_ARGS --class-scope $2"; shift 2;;
+        --output-prefix) EXTRA_ARGS="$EXTRA_ARGS --output-prefix $2"; shift 2;;
         *) echo "Unknown arg: $1"; exit 1;;
     esac
 done
 
 if [ -z "$SELECTED_DATASET" ]; then
-    echo "ERROR: --dataset required (idd or nuowodb)"; exit 1
+    echo "ERROR: --dataset required (idd or nuowodb/nuscenes)"; exit 1
 fi
 
 source /home/agipml/sourav.rout/miniconda3/bin/activate yolouniow
@@ -70,7 +79,7 @@ case "${SELECTED_DATASET}" in
         export FEWSHOT_DIR="${FEWSHOT_DIR:-data/OWOD/iddsplit}"
         CONFIG="configs/test/idd_attribute_select.yaml"
         ;;
-    nuowodb)
+    nuowodb|nuimages|nuscenes)
         export DATASET="${DATASET:-nuOWODB}"
         export TASK="${TASK:-2}"
         export FEWSHOT_K="${FEWSHOT_K:-10}"
@@ -79,7 +88,7 @@ case "${SELECTED_DATASET}" in
         CONFIG="configs/test/nuowodb_attribute_select.yaml"
         ;;
     *)
-        echo "ERROR: unknown dataset '${SELECTED_DATASET}'. Use idd or nuowodb."; exit 1;;
+        echo "ERROR: unknown dataset '${SELECTED_DATASET}'. Use idd or nuowodb/nuscenes."; exit 1;;
 esac
 
 echo "=========================================="

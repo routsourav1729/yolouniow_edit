@@ -31,6 +31,8 @@
 #   --threshold T         Detection threshold (default: 0.05)
 #   --config PATH         Override config file path
 #   --pretrained PATH     Override pretrained checkpoint path
+#   --work-dir PATH       Override T1 training/checkpoint directory
+#   --eval-dir PATH       Override T1 evaluation directory
 # ============================================================================
 
 # ─── Parse arguments ─────────────────────────────────────────────────────────
@@ -39,6 +41,8 @@ NUM_GPUS=""
 THRESHOLD=0.05
 CONFIG_OVERRIDE=""
 PRETRAINED_OVERRIDE=""
+WORK_DIR_OVERRIDE=""
+EVAL_DIR_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -47,9 +51,11 @@ while [[ $# -gt 0 ]]; do
         --threshold)  THRESHOLD="$2"; shift 2 ;;
         --config)     CONFIG_OVERRIDE="$2"; shift 2 ;;
         --pretrained) PRETRAINED_OVERRIDE="$2"; shift 2 ;;
+        --work-dir)   WORK_DIR_OVERRIDE="$2"; shift 2 ;;
+        --eval-dir)   EVAL_DIR_OVERRIDE="$2"; shift 2 ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: sbatch scripts/train_owod_l.sbatch --dataset DATASET [--gpus N] [--threshold T] [--config PATH] [--pretrained PATH]"
+            echo "Usage: sbatch scripts/train_owod_l.sbatch --dataset DATASET [--gpus N] [--threshold T] [--config PATH] [--pretrained PATH] [--work-dir PATH] [--eval-dir PATH]"
             exit 1
             ;;
     esac
@@ -112,6 +118,8 @@ esac
 
 T1_WORK_DIR=work_dirs/${STEM}_${DATASET_LOWER}_train_task1
 T1_EVAL_DIR=work_dirs/eval_${DATASET}_L_test_task1
+T1_WORK_DIR=${WORK_DIR_OVERRIDE:-$T1_WORK_DIR}
+T1_EVAL_DIR=${EVAL_DIR_OVERRIDE:-$T1_EVAL_DIR}
 
 echo "=========================================="
 echo "YOLO-UniOW-L  OWOD TRAINING (T1)"

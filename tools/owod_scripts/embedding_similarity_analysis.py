@@ -47,7 +47,7 @@ DATASETS = {
             'diningtable', 'dog', 'horse', 'motorbike', 'person',
         ],
         't1_ckpt':   'work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_food_voc_train_task1/best_owod_Both_epoch_15.pth',
-        't2_ckpt':   'work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_food_voc_train_task2_10shot_seed1_wapr/best_owod_Both_epoch_20.pth',
+        't2_ckpt':   'work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_food_voc_train_task2_10shot_seed1/best_owod_Both_epoch_20.pth',
     },
     'FOOD_VOCCOCO': {
         'embed_dir': 'embeddings/uniow-food-voccoco',
@@ -66,7 +66,7 @@ DATASETS = {
             'refrigerator',
         ],
         't1_ckpt':   'work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_food_voccoco_train_task1/best_owod_Both_epoch_20.pth',
-        't2_ckpt':   'work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_food_voccoco_train_task2_10shot_seed1_wapr/best_owod_Both_epoch_5.pth',
+        't2_ckpt':   'work_dirs/yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_food_voccoco_train_task2_10shot_seed1/best_owod_Both_epoch_5.pth',
     },
 }
 

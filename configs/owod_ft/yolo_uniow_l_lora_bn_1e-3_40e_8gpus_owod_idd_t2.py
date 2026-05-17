@@ -1,6 +1,6 @@
 _base_ = ['yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_idd.py']
 
-# T2 fine-tuning: 20 epochs, 10-shot, no WAPR, no SCPI.
+# T2 fine-tuning: 20 epochs, 10-shot.
 # Load from T1 best checkpoint; base-class embeddings are frozen via
 # embedding_mask (PREV=8 frozen, CUR=6 trainable, unk+anchor trainable).
 max_epochs = 20

@@ -17,12 +17,12 @@
 # confusion. Reports mAP/recall via OpenWorldMetric.
 #
 # Usage:
-#   sbatch scripts/experiment/eval_idd_t2_on_train.sbatch                 # uses _wapr ckpt by default
+#   sbatch scripts/experiment/eval_idd_t2_on_train.sbatch                 # uses baseline T2 ckpt by default
 #   sbatch scripts/experiment/eval_idd_t2_on_train.sbatch --variant kume
 #   sbatch scripts/experiment/eval_idd_t2_on_train.sbatch --ckpt /path/to/best.pth
 # ============================================================================
 
-VARIANT="wapr"
+VARIANT="plain"
 CKPT_OVERRIDE=""
 SHOT=10
 SEED=1
@@ -43,9 +43,7 @@ mkdir -p slurm_logs/idd
 
 case "$VARIANT" in
     plain) SUFFIX="" ;;
-    wapr)  SUFFIX="_wapr" ;;
     kume)  SUFFIX="_kume" ;;
-    wapr_kume) SUFFIX="_wapr_kume" ;;
     *) SUFFIX="_${VARIANT}" ;;
 esac
 

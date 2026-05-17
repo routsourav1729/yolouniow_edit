@@ -42,6 +42,7 @@ owod_task = {{'$TASK:1'}}                                                       
 train_image_set = '{{$IMAGESET:train}}'                                           # owod train image set (default: train)
 
 threshold = {{'$THRESHOLD:0.05'}}                                                 # prediction score threshold for known class (default: 0.05)
+unknown_threshold = {{'$UNK_THRESHOLD:0.0'}}                                       # T_unk score threshold for unknown predictions (default: keep current behavior)
 training_strategy = {{'$TRAINING_STRATEGY:0'}}                                    # 0: OWOD, 1: ORACLE (default: 0)
 save_rets = {{'$SAVE:False'}}                                                     # save evaluation results to 'eval_output.txt' (default: False)
 analyze = {{'$ANALYZE:0'}}                                                          # run embedding diagnostic after eval (0=off, 1=on)
@@ -101,6 +102,7 @@ owod_val_evaluator = dict(
     data_root=owod_root,
     dataset_name=owod_dataset,
     threshold=threshold,
+    unknown_threshold=unknown_threshold,
     save_rets=save_rets,
     owod_cfg=owod_cfg,
 )

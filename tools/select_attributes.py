@@ -16,6 +16,7 @@ Reuses build_model / encode_prompts_cached from probe_text_visual.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import random
@@ -28,6 +29,40 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import yaml
+
+
+OWOD_TASK_LISTS = {
+    'IDD': [0, 8, 14],
+    'nuOWODB': [0, 10, 17, 23],
+    'FOOD_VOC': [0, 10, 15],
+    'FOOD_VOCCOCO': [0, 20, 40],
+}
+
+
+def filter_classes_by_scope(classes_cfg, dataset_name, task_num, class_scope):
+    classes_cfg = [dict(ce, _orig_index=i) for i, ce in enumerate(classes_cfg)]
+    if class_scope == 'all':
+        return classes_cfg
+    if class_scope == 'novel':
+        class_scope = 'current'
+    if class_scope != 'current':
+        raise ValueError(f'unknown class_scope={class_scope}')
+
+    task_list = OWOD_TASK_LISTS.get(dataset_name)
+    if task_list is None:
+        raise ValueError(
+            f'no OWOD task list for dataset {dataset_name}; '
+            'use --class-scope all or add the dataset task list')
+    if task_num <= 0 or task_num >= len(task_list):
+        raise ValueError(
+            f'cannot select current classes for task {task_num} with '
+            f'task_list={task_list}')
+    start, end = task_list[task_num - 1], task_list[task_num]
+    if end > len(classes_cfg):
+        raise ValueError(
+            f'class config has {len(classes_cfg)} classes, but '
+            f'{dataset_name} task {task_num} current range is {start}:{end}')
+    return classes_cfg[start:end]
 
 
 # ─── Reliable per-class support set ──────────────────────────────────────────
@@ -205,11 +240,66 @@ def extract_visual_pools(model, head, head_module, loader, device,
     return pools
 
 
+# ─── Cached visual pools ─────────────────────────────────────────────────────
+def _stack_and_normalize_features(entries):
+    if entries is None:
+        return None
+    if isinstance(entries, torch.Tensor):
+        arr = entries.detach().cpu().float().numpy()
+    elif isinstance(entries, np.ndarray):
+        arr = entries
+    else:
+        entries = list(entries)
+        if not entries:
+            return None
+        arr = np.stack([
+            e.detach().cpu().float().numpy() if isinstance(e, torch.Tensor)
+            else np.asarray(e)
+            for e in entries
+        ], axis=0)
+    arr = np.asarray(arr, dtype=np.float32)
+    if arr.ndim != 2:
+        raise ValueError(f'expected cached feature matrix, got shape {arr.shape}')
+    arr = arr / (np.linalg.norm(arr, axis=1, keepdims=True) + 1e-12)
+    return arr.astype(np.float32)
+
+
+def load_cached_visual_pools(path, classes_cfg, primary_iou):
+    """Load visual_pools_iouXX.pt or legacy pools.pt into ci -> (N, D)."""
+    obj = torch.load(path, map_location='cpu')
+    pools_arr = {}
+    if isinstance(obj, dict) and 'pools_raw' in obj:
+        raw = obj['pools_raw']
+        for ci, ce in enumerate(classes_cfg):
+            orig_ci = int(ce.get('_orig_index', ci))
+            entries = raw.get((orig_ci, primary_iou))
+            if entries is None:
+                for key, val in raw.items():
+                    if (isinstance(key, tuple) and len(key) == 2
+                            and key[0] == orig_ci
+                            and abs(float(key[1]) - float(primary_iou)) < 1e-6):
+                        entries = val
+                        break
+            feats = _stack_and_normalize_features(entries)
+            if feats is not None and len(feats) > 0:
+                pools_arr[ci] = feats
+        return pools_arr
+
+    if not isinstance(obj, dict):
+        raise ValueError(f'unsupported cached pools format in {path}')
+
+    for ci, ce in enumerate(classes_cfg):
+        entries = obj.get(ce['name'], obj.get(ci))
+        feats = _stack_and_normalize_features(entries)
+        if feats is not None and len(feats) > 0:
+            pools_arr[ci] = feats
+    return pools_arr
+
+
 # ─── Stage 2: text encoding ──────────────────────────────────────────────────
-def encode_class_texts(model, classes_cfg, attr_dict, cache_dir, device,
-                       encode_prompts_cached):
-    """Returns txt_emb[ci] (30, D) for the 30 candidates of class ci."""
-    all_strings, idx_map, per_class_idx, texts = [], {}, [], []
+def _collect_class_texts(classes_cfg, attr_dict):
+    all_strings, idx_map, per_class_idx, default_idx, texts, defaults = (
+        [], {}, [], [], [], [])
     for ce in classes_cfg:
         cands = list(attr_dict[ce['name']])
         if len(cands) != 30:
@@ -223,9 +313,59 @@ def encode_class_texts(model, classes_cfg, attr_dict, cache_dir, device,
             idxs.append(idx_map[s])
         per_class_idx.append(idxs)
         texts.append(cands)
-    flat_np = encode_prompts_cached(
-        model, all_strings, cache_dir, device).detach().cpu().numpy()
-    return [flat_np[idxs] for idxs in per_class_idx], texts
+        default_text = ce.get('default', ce['name'])
+        if default_text not in idx_map:
+            idx_map[default_text] = len(all_strings)
+            all_strings.append(default_text)
+        default_idx.append(idx_map[default_text])
+        defaults.append(default_text)
+    return all_strings, per_class_idx, default_idx, texts, defaults
+
+
+def load_prompt_embeddings_cached(prompts, cache_dir):
+    manifest_path = os.path.join(cache_dir, 'manifest.json')
+    if not os.path.exists(manifest_path):
+        raise FileNotFoundError(
+            f'missing text embedding manifest: {manifest_path}')
+    with open(manifest_path) as f:
+        manifest = json.load(f)
+
+    out, missing = [], []
+    for prompt in prompts:
+        entry = manifest.get(prompt)
+        fpath = (os.path.join(cache_dir, entry['file'])
+                 if entry and entry.get('file') else None)
+        if not fpath or not os.path.exists(fpath):
+            missing.append(prompt)
+            continue
+        out.append(np.load(fpath))
+    if missing:
+        preview = ', '.join(repr(s) for s in missing[:8])
+        more = '' if len(missing) <= 8 else f', ... +{len(missing) - 8} more'
+        raise FileNotFoundError(
+            'cached text embeddings missing for '
+            f'{len(missing)} prompt(s): {preview}{more}. '
+            'Run without --cache-only once to encode them.')
+
+    arr = np.stack(out).astype(np.float32)
+    arr = arr / (np.linalg.norm(arr, axis=1, keepdims=True) + 1e-12)
+    return arr
+
+
+def encode_class_texts(model, classes_cfg, attr_dict, cache_dir, device,
+                       encode_prompts_cached, cache_only=False):
+    """Returns candidate/default text embeddings and their source strings."""
+    all_strings, per_class_idx, default_idx, texts, defaults = (
+        _collect_class_texts(classes_cfg, attr_dict))
+    if cache_only:
+        flat_np = load_prompt_embeddings_cached(all_strings, cache_dir)
+    else:
+        flat_np = encode_prompts_cached(
+            model, all_strings, cache_dir, device).detach().cpu().numpy()
+        flat_np = flat_np / (np.linalg.norm(flat_np, axis=1, keepdims=True)
+                             + 1e-12)
+    return ([flat_np[idxs] for idxs in per_class_idx], texts,
+            flat_np[default_idx], defaults)
 
 
 # ─── Stage 3: AUROC (own vs all-others pooled) ──────────────────────────────
@@ -274,6 +414,74 @@ def compute_auroc_table(pools_arr, txt_emb, classes_cfg):
     return auc, N_per_class
 
 
+def _ratio_or_inf(a, b, eps=1e-12):
+    if np.isnan(a) or np.isnan(b):
+        return float('nan')
+    if abs(b) <= eps:
+        if a > 0:
+            return float('inf')
+        if a < 0:
+            return float('-inf')
+        return float('nan')
+    return float(a / b)
+
+
+def compute_mean_ratio_table(pools_arr, txt_emb, default_emb, classes_cfg,
+                             texts, default_eps=1e-6):
+    """Mean-score selector.
+
+    For class c and attribute q:
+      a = mean score of q on P_c
+      b = max_r!=c mean score of q on P_r
+    Selection later filters a > mean(default class text on P_c) and ranks a / b.
+    """
+    N_C = len(classes_cfg)
+    rows_by_class = {}
+    N_per_class = np.zeros(N_C, dtype=np.int64)
+
+    for ci, ce in enumerate(classes_cfg):
+        P_c = pools_arr.get(ci)
+        rows = []
+        if P_c is None or len(P_c) == 0:
+            rows_by_class[ce['name']] = rows
+            continue
+        N_per_class[ci] = len(P_c)
+
+        E = txt_emb[ci]                       # (30, D)
+        own_means = (P_c @ E.T).mean(axis=0)  # (30,)
+        default_own_mean = float((P_c @ default_emb[ci]).mean())
+
+        for q, attr in enumerate(texts[ci]):
+            other_means = []
+            for r, other_ce in enumerate(classes_cfg):
+                if r == ci or r not in pools_arr or len(pools_arr[r]) == 0:
+                    continue
+                other_mean = float((pools_arr[r] @ E[q]).mean())
+                other_means.append((other_mean, other_ce['name']))
+
+            if other_means:
+                b, confuser = max(other_means, key=lambda x: x[0])
+            else:
+                b, confuser = float('nan'), None
+
+            a = float(own_means[q])
+            rows.append(dict(
+                class_name=ce['name'],
+                attribute=attr,
+                own_mean_a=a,
+                default_own_mean=default_own_mean,
+                own_minus_default=a - default_own_mean,
+                beats_default=bool(a > default_own_mean + default_eps),
+                max_other_mean_b=float(b),
+                confuser=confuser,
+                own_minus_confuser=(a - b if not np.isnan(b)
+                                    else float('nan')),
+                ratio_a_over_b=_ratio_or_inf(a, b),
+            ))
+        rows_by_class[ce['name']] = rows
+    return rows_by_class, N_per_class
+
+
 # ─── Output ──────────────────────────────────────────────────────────────────
 def write_outputs(out_dir, classes_cfg, texts, auc, N_per_class, top_k):
     os.makedirs(out_dir, exist_ok=True)
@@ -313,27 +521,177 @@ def print_summary(classes_cfg, payload, top_k):
             print(f'{head}{a:11.3f}  {s}')
 
 
+def _json_float(v):
+    if v is None:
+        return None
+    v = float(v)
+    return v if np.isfinite(v) else None
+
+
+def _csv_float(v):
+    if v is None:
+        return ''
+    v = float(v)
+    return f'{v:.8g}' if np.isfinite(v) else ''
+
+
+def _ratio_output_stem(output_prefix, top_k):
+    if output_prefix:
+        return f'{output_prefix}_top{top_k}_mean_ratio'
+    return f'selected_top{top_k}_mean_ratio'
+
+
+def write_mean_ratio_outputs(out_dir, classes_cfg, rows_by_class,
+                             N_per_class, top_k, default_texts,
+                             output_prefix=None, metadata=None):
+    os.makedirs(out_dir, exist_ok=True)
+    stem = _ratio_output_stem(output_prefix, top_k)
+    json_path = os.path.join(out_dir, f'{stem}.json')
+    csv_path = os.path.join(out_dir, f'{stem}.csv')
+
+    payload = {
+        '_meta': dict(metadata or {}, metric=(
+            'filter candidate attributes with own_mean_a > default_own_mean '
+            '(1e-6 tolerance); '
+            'rank by ratio_a_over_b where b is max mean score on other classes'))
+    }
+    csv_rows = []
+
+    for ci, ce in enumerate(classes_cfg):
+        cname = ce['name']
+        rows = rows_by_class[cname]
+        eligible = [r for r in rows if r['beats_default']
+                    and np.isfinite(r['ratio_a_over_b'])]
+        eligible.sort(key=lambda r: (-r['ratio_a_over_b'],
+                                     -r['own_mean_a'],
+                                     r['max_other_mean_b']))
+        selected = eligible[:top_k]
+        rank_by_attr = {r['attribute']: k + 1 for k, r in enumerate(selected)}
+        if not rows:
+            default_own_mean = None
+        else:
+            default_own_mean = rows[0]['default_own_mean']
+
+        payload[cname] = dict(
+            support_size=int(N_per_class[ci]),
+            default_text=default_texts[ci],
+            default_own_mean=_json_float(default_own_mean),
+            selected=[r['attribute'] for r in selected],
+            selected_ratio=[_json_float(r['ratio_a_over_b'])
+                            for r in selected],
+            selected_own_mean_a=[_json_float(r['own_mean_a'])
+                                 for r in selected],
+            selected_max_other_mean_b=[_json_float(r['max_other_mean_b'])
+                                       for r in selected],
+            selected_confuser=[r['confuser'] for r in selected],
+            no_attribute_beats_default=(len(eligible) == 0),
+            all_scores={
+                r['attribute']: dict(
+                    own_mean_a=_json_float(r['own_mean_a']),
+                    default_own_mean=_json_float(r['default_own_mean']),
+                    own_minus_default=_json_float(r['own_minus_default']),
+                    beats_default=bool(r['beats_default']),
+                    max_other_mean_b=_json_float(r['max_other_mean_b']),
+                    confuser=r['confuser'],
+                    own_minus_confuser=_json_float(r['own_minus_confuser']),
+                    ratio_a_over_b=_json_float(r['ratio_a_over_b']),
+                    selected_rank=rank_by_attr.get(r['attribute']),
+                )
+                for r in rows
+            },
+        )
+
+        for r in rows:
+            csv_rows.append(dict(
+                class_name=cname,
+                attribute=r['attribute'],
+                default_text=default_texts[ci],
+                support_size=int(N_per_class[ci]),
+                own_mean_a=_csv_float(r['own_mean_a']),
+                default_own_mean=_csv_float(r['default_own_mean']),
+                own_minus_default=_csv_float(r['own_minus_default']),
+                beats_default=int(r['beats_default']),
+                max_other_mean_b=_csv_float(r['max_other_mean_b']),
+                confuser=r['confuser'] or '',
+                own_minus_confuser=_csv_float(r['own_minus_confuser']),
+                ratio_a_over_b=_csv_float(r['ratio_a_over_b']),
+                selected_rank=rank_by_attr.get(r['attribute'], ''),
+            ))
+
+    with open(json_path, 'w') as f:
+        json.dump(payload, f, indent=2, allow_nan=False)
+    fieldnames = [
+        'class_name', 'attribute', 'default_text', 'support_size',
+        'own_mean_a', 'default_own_mean', 'own_minus_default',
+        'beats_default', 'max_other_mean_b', 'confuser',
+        'own_minus_confuser', 'ratio_a_over_b', 'selected_rank',
+    ]
+    with open(csv_path, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(csv_rows)
+    print(f'[write] {json_path}')
+    print(f'[write] {csv_path}')
+    return payload
+
+
+def print_mean_ratio_summary(classes_cfg, payload, top_k):
+    print(f'\n=== top-{top_k} attributes per class '
+          '(own > default, ranked by own/confuser mean) ===')
+    print(f'  {"class":22s} {"N":>5s} {"ratio":>8s} {"a":>8s} {"b":>8s}  '
+          f'{"confuser":20s} attribute')
+    for ce in classes_cfg:
+        info = payload[ce['name']]
+        N = info['support_size']
+        selected = info['selected']
+        if not selected:
+            if N == 0:
+                note = 'no support'
+            else:
+                note = f'no attr beats default "{info["default_text"]}"'
+            print(f'  {ce["name"][:22]:22s} {N:5d}  ({note})')
+            continue
+        for k, attr in enumerate(selected):
+            ratio = info['selected_ratio'][k]
+            a = info['selected_own_mean_a'][k]
+            b = info['selected_max_other_mean_b'][k]
+            conf = info['selected_confuser'][k] or ''
+            head = (f'  {ce["name"][:22]:22s} {N:5d} '
+                    if k == 0 else ' ' * 30)
+            print(f'{head}{ratio:8.3f} {a:8.4f} {b:8.4f}  '
+                  f'{conf[:20]:20s} {attr}')
+
+
 # ─── Driver ──────────────────────────────────────────────────────────────────
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument('--config', required=True)
     p.add_argument('--out-dir', default=None)
     p.add_argument('--num-images', type=int, default=None)
-    p.add_argument('--top-k', type=int, default=3)
+    p.add_argument('--top-k', type=int, default=None)
+    p.add_argument('--cached-pools', default=None,
+                   help='Load cached visual pools instead of extracting them.')
+    p.add_argument('--cache-only', action='store_true',
+                   help='With --cached-pools, load text embeddings from the '
+                        'cache and skip model construction.')
+    p.add_argument('--ratio-only', action='store_true',
+                   help='Write only the own/default-filtered mean-ratio output.')
+    p.add_argument('--class-scope', choices=['all', 'current', 'novel'],
+                   default='all',
+                   help='Limit analysis to all config classes or current/novel '
+                        'classes for the OWOD task.')
+    p.add_argument('--output-prefix', default=None,
+                   help='Prefix for the mean-ratio output files.')
     return p.parse_args()
 
 
 def main():
     args = parse_args()
-    build_model, collate_probe, encode_prompts_cached = _import_probe()
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     if repo_root not in sys.path:
         sys.path.insert(0, repo_root)
-    from mmengine.dataset import Compose
-    from mmengine.registry import init_default_scope
-    import mmyolo  # noqa
-    import yolo_world  # noqa
-    init_default_scope('mmyolo')
+    if args.cache_only and not args.cached_pools:
+        raise ValueError('--cache-only requires --cached-pools')
 
     with open(args.config) as f:
         pcfg = yaml.safe_load(f)
@@ -347,26 +705,42 @@ def main():
     bs = int(pcfg.get('batch_size', 8))
     nw = int(pcfg.get('num_workers', 8))
     primary_iou = float(pcfg.get('primary_iou', 0.8))
-    raw_k = pcfg.get('top_k_select', pcfg.get('top_k', args.top_k))
+    raw_k = args.top_k
+    if raw_k is None:
+        raw_k = pcfg.get('top_k_select', pcfg.get('top_k', 3))
     top_k = int(raw_k[0] if isinstance(raw_k, list) else raw_k)
+    dataset_name = os.environ.get('DATASET') or pcfg.get('dataset_name')
+    task_num = int(os.environ.get('TASK', pcfg.get('task', 2)))
 
     with open(pcfg['attributes_json']) as f:
         attr_dict = json.load(f)
-    classes_cfg = pcfg['classes']
+    classes_cfg = filter_classes_by_scope(
+        pcfg['classes'], dataset_name, task_num, args.class_scope)
     for ce in classes_cfg:
         if ce['name'] not in attr_dict:
             raise KeyError(f'class "{ce["name"]}" missing from attributes_json')
 
     print(f'[init] tag={pcfg["experiment_tag"]} '
-          f'N_classes={len(classes_cfg)} IoU={primary_iou} K={top_k}')
+          f'N_classes={len(classes_cfg)} IoU={primary_iou} K={top_k} '
+          f'scope={args.class_scope}')
 
-    model, mmcfg = build_model(
-        pcfg['model_config'], pcfg['checkpoint'],
-        pcfg['text_encoder_pretrain_ckpt'],
-        pcfg['text_encoder_model_name'],
-        pcfg['text_encoder_use_lora'], device)
-    model.eval()
-    head, head_module = model.bbox_head, model.bbox_head.head_module
+    model = mmcfg = head = head_module = None
+    collate_probe = encode_prompts_cached = None
+    if not args.cache_only:
+        build_model, collate_probe, encode_prompts_cached = _import_probe()
+        from mmengine.dataset import Compose
+        from mmengine.registry import init_default_scope
+        import mmyolo  # noqa
+        import yolo_world  # noqa
+        init_default_scope('mmyolo')
+
+        model, mmcfg = build_model(
+            pcfg['model_config'], pcfg['checkpoint'],
+            pcfg['text_encoder_pretrain_ckpt'],
+            pcfg['text_encoder_model_name'],
+            pcfg['text_encoder_use_lora'], device)
+        model.eval()
+        head, head_module = model.bbox_head, model.bbox_head.head_module
 
     fewshot_dir = os.environ.get('FEWSHOT_DIR') or pcfg.get('fewshot_dir')
     fewshot_seed = int(os.environ.get('FEWSHOT_SEED',
@@ -374,69 +748,93 @@ def main():
     fewshot_k = int(os.environ.get('FEWSHOT_K', pcfg.get('fewshot_k', 10)))
     select_k = int(pcfg.get('select_k', 20))
     dataset_root = pcfg.get('dataset_root', 'data/OWOD')
-    dataset_name = os.environ.get('DATASET') or pcfg.get('dataset_name')
 
-    image_ids, img_paths, reliable_gt, per_class_count = build_reliable_support(
-        fewshot_dir, fewshot_seed, fewshot_k, select_k,
-        classes_cfg, dataset_root, dataset_name)
-    print('[reliable] reliable boxes per class:')
-    for ce in classes_cfg:
-        print(f'  {ce["name"][:22]:22s}  '
-              f'{per_class_count.get(ce["name"], 0):3d}/{select_k}')
-    print(f'[reliable] {len(image_ids)} unique images')
+    if args.cached_pools:
+        print(f'[stage1] loading cached visual pools: {args.cached_pools}')
+        pools_arr = load_cached_visual_pools(
+            args.cached_pools, classes_cfg, primary_iou)
+    else:
+        image_ids, img_paths, reliable_gt, per_class_count = build_reliable_support(
+            fewshot_dir, fewshot_seed, fewshot_k, select_k,
+            classes_cfg, dataset_root, dataset_name)
+        print('[reliable] reliable boxes per class:')
+        for ce in classes_cfg:
+            print(f'  {ce["name"][:22]:22s}  '
+                  f'{per_class_count.get(ce["name"], 0):3d}/{select_k}')
+        print(f'[reliable] {len(image_ids)} unique images')
 
-    test_ds_cfg = mmcfg.test_dataloader.dataset
-    raw_pipeline = (test_ds_cfg.pipeline if hasattr(test_ds_cfg, 'pipeline')
-                    else test_ds_cfg.dataset.pipeline)
-    img_pipeline_cfg = [t for t in raw_pipeline
-                        if 'LoadAnnotations' not in t.get('type', '')
-                        and 'PackDetInputs' not in t.get('type', '')]
-    img_pipeline_cfg.append(dict(
-        type='mmdet.PackDetInputs',
-        meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape',
-                   'scale_factor', 'pad_param')))
-    pipeline = Compose(img_pipeline_cfg)
+        test_ds_cfg = mmcfg.test_dataloader.dataset
+        raw_pipeline = (test_ds_cfg.pipeline if hasattr(test_ds_cfg, 'pipeline')
+                        else test_ds_cfg.dataset.pipeline)
+        img_pipeline_cfg = [t for t in raw_pipeline
+                            if 'LoadAnnotations' not in t.get('type', '')
+                            and 'PackDetInputs' not in t.get('type', '')]
+        img_pipeline_cfg.append(dict(
+            type='mmdet.PackDetInputs',
+            meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape',
+                       'scale_factor', 'pad_param')))
+        pipeline = Compose(img_pipeline_cfg)
 
-    image_ids = [iid for iid in image_ids if os.path.exists(img_paths[iid])]
-    if pcfg.get('num_images', 0):
-        image_ids = image_ids[:int(pcfg['num_images'])]
-    print(f'[init] N_support_images={len(image_ids)}')
+        image_ids = [iid for iid in image_ids if os.path.exists(img_paths[iid])]
+        if pcfg.get('num_images', 0):
+            image_ids = image_ids[:int(pcfg['num_images'])]
+        print(f'[init] N_support_images={len(image_ids)}')
 
-    loader = torch.utils.data.DataLoader(
-        ReliableSupportDataset(image_ids, img_paths, pipeline),
-        batch_size=bs, num_workers=nw, shuffle=False,
-        collate_fn=collate_probe, pin_memory=True,
-        persistent_workers=(nw > 0))
+        loader = torch.utils.data.DataLoader(
+            ReliableSupportDataset(image_ids, img_paths, pipeline),
+            batch_size=bs, num_workers=nw, shuffle=False,
+            collate_fn=collate_probe, pin_memory=True,
+            persistent_workers=(nw > 0))
 
-    print(f'[stage1] extracting BN(F) at IoU={primary_iou}, '
-          f'bs={bs} workers={nw} amp={use_amp}')
-    t0 = time.time()
-    pools_raw = extract_visual_pools(
-        model, head, head_module, loader, device,
-        classes_cfg, primary_iou, reliable_gt, use_amp)
-    print(f'[stage1] done in {time.time()-t0:.1f}s')
+        print(f'[stage1] extracting BN(F) at IoU={primary_iou}, '
+              f'bs={bs} workers={nw} amp={use_amp}')
+        t0 = time.time()
+        pools_raw = extract_visual_pools(
+            model, head, head_module, loader, device,
+            classes_cfg, primary_iou, reliable_gt, use_amp)
+        print(f'[stage1] done in {time.time()-t0:.1f}s')
 
-    pools_arr = {}
-    for ci, entries in pools_raw.items():
-        if not entries:
-            continue
-        feats = np.stack(entries, axis=0)
-        feats = feats / (np.linalg.norm(feats, axis=1, keepdims=True) + 1e-12)
-        pools_arr[ci] = feats.astype(np.float32)
+        pools_arr = {}
+        for ci, entries in pools_raw.items():
+            feats = _stack_and_normalize_features(entries)
+            if feats is not None and len(feats) > 0:
+                pools_arr[ci] = feats
     print('[stage1] pool sizes:')
     for ci, ce in enumerate(classes_cfg):
         print(f'  {ce["name"][:22]:22s}  N={len(pools_arr.get(ci, [])):4d}')
 
-    print('\n[stage2] encoding 30 candidates per class')
-    txt_emb, texts = encode_class_texts(
+    print('\n[stage2] encoding 30 candidates + default class names per class')
+    txt_emb, texts, default_emb, default_texts = encode_class_texts(
         model, classes_cfg, attr_dict, cache_dir, device,
-        encode_prompts_cached)
+        encode_prompts_cached, cache_only=args.cache_only)
 
-    print('[stage3] computing all-vs-all AUROC')
-    auc, N_per_class = compute_auroc_table(pools_arr, txt_emb, classes_cfg)
+    if not args.ratio_only:
+        print('[stage3] computing all-vs-all AUROC')
+        auc, N_per_class = compute_auroc_table(pools_arr, txt_emb, classes_cfg)
 
-    payload = write_outputs(out_dir, classes_cfg, texts, auc, N_per_class, top_k)
-    print_summary(classes_cfg, payload, top_k)
+        payload = write_outputs(
+            out_dir, classes_cfg, texts, auc, N_per_class, top_k)
+        print_summary(classes_cfg, payload, top_k)
+
+    print('[stage4] computing own/default-filtered mean-ratio selection')
+    ratio_rows, ratio_N = compute_mean_ratio_table(
+        pools_arr, txt_emb, default_emb, classes_cfg, texts)
+    ratio_payload = write_mean_ratio_outputs(
+        out_dir, classes_cfg, ratio_rows, ratio_N, top_k, default_texts,
+        output_prefix=args.output_prefix,
+        metadata=dict(
+            experiment_tag=pcfg.get('experiment_tag'),
+            dataset_name=dataset_name,
+            task_num=task_num,
+            class_scope=args.class_scope,
+            fewshot_k=fewshot_k,
+            fewshot_seed=fewshot_seed,
+            select_k=select_k,
+            primary_iou=primary_iou,
+            default_eps=1e-6,
+            cached_pools=args.cached_pools,
+        ))
+    print_mean_ratio_summary(classes_cfg, ratio_payload, top_k)
 
 
 if __name__ == '__main__':

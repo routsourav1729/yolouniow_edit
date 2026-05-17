@@ -3,7 +3,7 @@
 ## Setup
 
 - **Model**: YOLO-UniOW-L, IDD dataset, Task 2 (8 base + 6 novel + unknown + anchor = 16 prompts)
-- **Checkpoint**: `best_owod_Both_epoch_40.pth` from T2 10-shot fine-tuning with WAPR
+- **Checkpoint**: `best_owod_Both_epoch_40.pth` from T2 10-shot fine-tuning
 - **Eval results**: PK (base mAP) = 39.47, CK (novel mAP) = 25.39, U-Recall = 42.21%, A-OSE = 1903
 - **Analysis**: 319,855 vision features extracted at GT locations across all 21,084 test images
 

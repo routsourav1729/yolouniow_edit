@@ -51,7 +51,7 @@ cd /home/agipml/sourav.rout/ALL_FILES/hypyolo/YOLO-UniOW
 
 mkdir -p slurm_logs/experiment probe_out/unknown_novel
 
-VARIANT="wapr"
+VARIANT="plain"
 SHOT=10
 SEED=1
 MATCH_IOU=0.9
@@ -84,9 +84,7 @@ done
 
 case "$VARIANT" in
     plain) SUFFIX="" ;;
-    wapr)  SUFFIX="_wapr" ;;
     kume)  SUFFIX="_kume" ;;
-    wapr_kume) SUFFIX="_wapr_kume" ;;
     *) SUFFIX="_${VARIANT}" ;;
 esac
 

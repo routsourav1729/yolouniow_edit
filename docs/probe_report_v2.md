@@ -15,7 +15,7 @@
 | Images | 21,084 | 14,747 |
 | Test classes | 14 | 23 |
 | Unique prompts | 40 | 69 |
-| Checkpoint | `best_owod_Both_epoch_40.pth` (T2, WAPR/KUME) | `best_owod_Both_epoch_10.pth` (T2) |
+| Checkpoint | `best_owod_Both_epoch_40.pth` (T2) | `best_owod_Both_epoch_10.pth` (T2) |
 | Model config | `yolo_uniow_l_lora_bn_1e-3_40e_8gpus_owod_idd_t2` | `yolo_uniow_l_lora_bn_1e-3_20e_8gpus_owod_nuowodb_t2` |
 
 Scores are `sigmoid(BN(Fvis) · E_prompt)` where `E_prompt` is encoded by the finetuned CLIP text encoder (LoRA + pretrain weights loaded from `pretrained/yolo_uniow_l_lora_bn_5e-4_...pth`). Absolute score values are low (~0.01–0.12) because the visual backbone was aligned to finetuned `self.embeddings`, not raw CLIP. Relative metrics (winner rate, specificity, net_useful) are the meaningful numbers.

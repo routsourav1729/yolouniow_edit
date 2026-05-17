@@ -386,6 +386,7 @@ class YOLOv10Head(BaseDenseHead):
         self.one2one_train_cfg = train_cfg.get("one2one_assigner", None)
         # whether to use anchor class as peudo label
         self.anchor_label = train_cfg.get("anchor_label", None)
+        self.fed_bce = train_cfg.get("fed_bce", None)
         self.test_cfg = test_cfg
 
         self.loss_dfl = MODELS.build(loss_dfl)
@@ -408,7 +409,7 @@ class YOLOv10Head(BaseDenseHead):
             self.num_level_priors = None
             self.flatten_priors_train = None
             self.stride_tensor = None
-        
+
         if self.one2one_train_cfg:
             self.one2one_assigner = TASK_UTILS.build(self.one2one_train_cfg)
 
@@ -417,6 +418,150 @@ class YOLOv10Head(BaseDenseHead):
             self.num_level_priors = None
             self.flatten_priors_train = None
             self.stride_tensor = None
+
+    def _pseudo_unknown_mask(self, flatten_cls_preds: Tensor,
+                             flatten_pred_bboxes: Tensor,
+                             gt_bboxes: Tensor,
+                             fg_mask_pre_prior: Tensor) -> Tuple[Tensor, Tensor]:
+        anchor_iou_thresh = self.anchor_label.get('iou_threshold', 0.5)
+        anchor_score_thresh = self.anchor_label.get('score_threshold', 0.0)
+        anchor_scores = flatten_cls_preds[:, :, -1].detach().sigmoid()
+        overlaps = bbox_overlaps(flatten_pred_bboxes, gt_bboxes, mode='iou')
+        unknown_mask = ((overlaps.amax(dim=2) < anchor_iou_thresh)
+                        & (fg_mask_pre_prior == 0)
+                        & (anchor_scores > anchor_score_thresh))
+
+        gate_epoch = self.anchor_label.get(
+            'tobj_gt_known_max_after_epoch',
+            self.anchor_label.get('objectness_gt_known_max_after_epoch', None))
+        current_epoch = getattr(self, 'current_epoch', 0)
+        if gate_epoch is not None and current_epoch > int(gate_epoch):
+            num_known_classes = int(
+                self.anchor_label.get('num_known_classes',
+                                      max(self.num_classes - 2, 1)))
+            num_known_classes = max(1, min(num_known_classes, self.num_classes))
+            max_known_scores = flatten_cls_preds[:, :, :num_known_classes].detach(
+            ).sigmoid().amax(dim=2)
+            unknown_mask = unknown_mask & (anchor_scores > max_known_scores)
+
+        return unknown_mask, anchor_scores
+
+    def _fed_bce_mask(self, assigned_labels: Tensor,
+                      fg_mask_pre_prior: Tensor,
+                      assigned_scores: Tensor) -> Optional[Tensor]:
+        """Mask classification BCE for sparse few-shot T2 supervision.
+
+        Current-class positives supervise only their own class channel. Base
+        positives are optional safe negatives for current-class channels.
+        Everything else receives zero classification gradient.
+        """
+        if self.fed_bce is None or not self.fed_bce.get('enabled', False):
+            return None
+
+        num_prev_classes = int(self.fed_bce.get('num_prev_classes', 0))
+        num_known_classes = int(
+            self.fed_bce.get('num_known_classes', self.num_classes - 2))
+        include_base_negatives = self.fed_bce.get(
+            'include_base_negatives', True)
+        class_unmask_weights = self.fed_bce.get('class_unmask_weights', None)
+        tunk_known_negative = self.fed_bce.get('tunk_known_negative', False)
+        mask_tunk_pseudo_positive = self.fed_bce.get(
+            'mask_tunk_pseudo_positive', False)
+        mask_classes_on_tunk_pseudo_positive = self.fed_bce.get(
+            'mask_classes_on_tunk_pseudo_positive', None)
+        unk_idx = int(self.fed_bce.get('unk_idx', self.num_classes - 2))
+
+        cls_mask = assigned_scores.new_zeros(assigned_scores.shape)
+        labels = assigned_labels.long().clamp(min=0,
+                                              max=self.num_classes - 1)
+        fg_mask = fg_mask_pre_prior.bool()
+
+        current_pos = ((assigned_labels >= num_prev_classes)
+                       & (assigned_labels < num_known_classes)
+                       & fg_mask)
+        if current_pos.any():
+            current_channel = torch.zeros_like(
+                assigned_scores, dtype=torch.bool)
+            current_channel.scatter_(2, labels.unsqueeze(-1), True)
+            cls_mask = torch.where(
+                current_pos.unsqueeze(-1) & current_channel,
+                torch.ones_like(cls_mask), cls_mask)
+
+        if include_base_negatives and num_prev_classes > 0:
+            base_pos = ((assigned_labels >= 0)
+                        & (assigned_labels < num_prev_classes)
+                        & fg_mask)
+            if base_pos.any() and num_known_classes > num_prev_classes:
+                cls_mask[:, :, num_prev_classes:num_known_classes] = (
+                    torch.where(
+                        base_pos.unsqueeze(-1),
+                        torch.ones_like(cls_mask[:, :, num_prev_classes:
+                                                  num_known_classes]),
+                        cls_mask[:, :, num_prev_classes:num_known_classes]))
+
+        if tunk_known_negative:
+            known_pos = ((assigned_labels >= 0)
+                         & (assigned_labels < num_known_classes)
+                         & fg_mask)
+            if known_pos.any() and 0 <= unk_idx < self.num_classes:
+                cls_mask[:, :, unk_idx] = torch.where(
+                    known_pos,
+                    torch.ones_like(cls_mask[:, :, unk_idx]),
+                    cls_mask[:, :, unk_idx])
+
+        if class_unmask_weights is not None:
+            weights = assigned_scores.new_tensor(class_unmask_weights)
+            if weights.numel() != self.num_classes:
+                raise ValueError(
+                    'fed_bce.class_unmask_weights must have '
+                    f'{self.num_classes} entries, got {weights.numel()}.')
+            weights = weights.clamp(0, 1).view(1, 1, -1)
+            cls_mask = cls_mask + (1.0 - cls_mask) * weights
+
+        if mask_tunk_pseudo_positive and 0 <= unk_idx < self.num_classes:
+            tunk_pseudo_pos = (assigned_scores[:, :, unk_idx] > 0) & ~fg_mask
+            if tunk_pseudo_pos.any():
+                cls_mask[:, :, unk_idx] = torch.where(
+                    tunk_pseudo_pos,
+                    torch.zeros_like(cls_mask[:, :, unk_idx]),
+                    cls_mask[:, :, unk_idx])
+
+        if (mask_classes_on_tunk_pseudo_positive is not None
+                and 0 <= unk_idx < self.num_classes):
+            tunk_pseudo_pos = (assigned_scores[:, :, unk_idx] > 0) & ~fg_mask
+            if tunk_pseudo_pos.any():
+                class_ids = [
+                    int(class_id)
+                    for class_id in mask_classes_on_tunk_pseudo_positive
+                ]
+                valid_ids = [
+                    class_id for class_id in class_ids
+                    if 0 <= class_id < self.num_classes
+                ]
+                if valid_ids:
+                    cls_mask[:, :, valid_ids] = torch.where(
+                        tunk_pseudo_pos.unsqueeze(-1),
+                        torch.zeros_like(cls_mask[:, :, valid_ids]),
+                        cls_mask[:, :, valid_ids])
+
+        return cls_mask
+
+    def _loss_cls_with_fed_bce(self, flatten_cls_preds: Tensor,
+                               assigned_scores: Tensor,
+                               assigned_labels: Tensor,
+                               fg_mask_pre_prior: Tensor,
+                               normalizer: Tensor) -> Tensor:
+        loss_cls_raw = self.loss_cls(flatten_cls_preds, assigned_scores)
+        cls_mask = self._fed_bce_mask(assigned_labels, fg_mask_pre_prior,
+                                      assigned_scores)
+        if cls_mask is not None:
+            loss_cls_raw = loss_cls_raw * cls_mask
+            # Keep YOLO's original target-sum normalizer by default. Otherwise
+            # masking changes the effective LR of every still-unmasked channel,
+            # including T_unk when its BCE entries are intentionally left free.
+            if self.fed_bce.get('renormalize_by_mask', False):
+                normalizer = (assigned_scores * cls_mask).sum().clamp(min=1)
+        return loss_cls_raw.sum() / normalizer
 
     def forward(self, x: Tuple[Tensor]) -> Tuple[List]:
         """Forward features from the upstream network.
@@ -566,37 +711,20 @@ class YOLOv10Head(BaseDenseHead):
         assigned_scores = assigned_result['assigned_scores']
         fg_mask_pre_prior = assigned_result['fg_mask_pre_prior']
 
-        _unknown_mask = None  # Track for KUME
+        _unknown_mask = None
         if self.anchor_label:
-            if getattr(self, '_wapr_in_warmup', False):
-                pass  # WAPR warmup: skip gatekeeper, T_unk gets zero gradient
-            else:
-                anchor_iou_thresh = self.anchor_label.get('iou_threshold', 0.5)
-                anchor_score_thresh = self.anchor_label.get('score_threshold', 0.01)
-                overlaps = bbox_overlaps(flatten_pred_bboxes, gt_bboxes, mode='iou')
-                anchor_scores = flatten_cls_preds[:, :, -1].detach().sigmoid()
-                known_scores = flatten_cls_preds[:, :, :-2].detach().sigmoid()
-                max_known_scores, best_known_class = known_scores.max(dim=2)
-                unknown_mask = (overlaps.amax(dim=2) < anchor_iou_thresh) & (fg_mask_pre_prior == 0) & (anchor_scores > anchor_score_thresh) & (anchor_scores > max_known_scores)
-                _unknown_mask = unknown_mask  # Save for KUME
-
-                wapr = getattr(self, 'wapr', None)
-                if wapr is not None:
-                    self._wapr_stats = wapr.redistribute(
-                        unknown_mask, anchor_scores,
-                        assigned_scores, max_known_scores,
-                        best_known_class)
-                else:
-                    assigned_scores[:, :, -2] = torch.where(unknown_mask,
-                                                            anchor_scores,
-                                                            assigned_scores[:, :, -2]) # unknown embedding score
+            unknown_mask, anchor_scores = self._pseudo_unknown_mask(
+                flatten_cls_preds, flatten_pred_bboxes, gt_bboxes,
+                fg_mask_pre_prior)
+            _unknown_mask = unknown_mask
+            assigned_scores[:, :, -2] = torch.where(
+                unknown_mask, anchor_scores,
+                assigned_scores[:, :, -2])  # unknown embedding score
 
         # [GADL] Cache raw logits and GT-assigned labels for GADL loss in OWODDetector.
         # - flatten_cls_preds: (B, N, K) raw logits WITH grad (pre-sigmoid).
         # - assigned_labels: (B, N) GT class index per anchor, -1 for negatives.
-        # WAPR only modifies anchors where fg_mask_pre_prior==0, so argmax for
-        # positive (fg) anchors is unaffected by WAPR redistribution above.
-        if getattr(self, 'gadl', None) is not None and not getattr(self, '_wapr_in_warmup', False):
+        if getattr(self, 'gadl', None) is not None:
             _gadl_raw_labels = assigned_scores.argmax(dim=-1)  # (B, N)
             self._gadl_assigned_labels = torch.where(
                 fg_mask_pre_prior,
@@ -605,8 +733,10 @@ class YOLOv10Head(BaseDenseHead):
             self._gadl_cls_logits = flatten_cls_preds  # (B, N, K) with grad
 
         assigned_scores_sum = assigned_scores.sum().clamp(min=1)
-        loss_cls = self.loss_cls(flatten_cls_preds, assigned_scores).sum()
-        loss_cls /= assigned_scores_sum
+        loss_cls = self._loss_cls_with_fed_bce(
+            flatten_cls_preds, assigned_scores,
+            assigned_result['assigned_labels'], fg_mask_pre_prior,
+            assigned_scores_sum)
 
         # rescale bbox
         assigned_bboxes /= self.stride_tensor
@@ -655,16 +785,13 @@ class YOLOv10Head(BaseDenseHead):
 
         # [KUME] Known-Unknown Margin Enforcement
         _kume = getattr(self, '_kume', None)
-        if _kume is not None and not getattr(self, '_wapr_in_warmup', False):
+        if _kume is not None:
             _kume_labels = assigned_scores.argmax(dim=-1)  # (B, N)
-            _wapr_mod = getattr(self, 'wapr', None)
-            _kume_w_r = getattr(_wapr_mod, '_last_w_r', None) if _wapr_mod is not None else None
             kume_loss = _kume.compute(
                 flatten_cls_preds,       # (B, N, K) with grad
                 _kume_labels,            # (B, N)
                 fg_mask_pre_prior,       # (B, N) bool
                 _unknown_mask,           # (B, N) bool or None
-                wapr_w_r=_kume_w_r,      # (B, N) or None
             )
             losses['kume_loss'] = kume_loss
 
@@ -758,31 +885,18 @@ class YOLOv10Head(BaseDenseHead):
         fg_mask_pre_prior = assigned_result['fg_mask_pre_prior']
 
         if self.anchor_label:
-            if getattr(self, '_wapr_in_warmup', False):
-                pass  # WAPR warmup: skip gatekeeper, T_unk gets zero gradient
-            else:
-                anchor_iou_thresh = self.anchor_label.get('iou_threshold', 0.5)
-                anchor_score_thresh = self.anchor_label.get('score_threshold', 0.01)
-                overlaps = bbox_overlaps(flatten_pred_bboxes, gt_bboxes, mode='iou')
-                anchor_scores = flatten_cls_preds[:, :, -1].detach().sigmoid()
-                known_scores = flatten_cls_preds[:, :, :-2].detach().sigmoid()
-                max_known_scores, best_known_class = known_scores.max(dim=2)
-                unknown_mask = (overlaps.amax(dim=2) < anchor_iou_thresh) & (fg_mask_pre_prior == 0) & (anchor_scores > anchor_score_thresh) & (anchor_scores > max_known_scores)
-
-                wapr = getattr(self, 'wapr', None)
-                if wapr is not None:
-                    self._wapr_stats = wapr.redistribute(
-                        unknown_mask, anchor_scores,
-                        assigned_scores, max_known_scores,
-                        best_known_class)
-                else:
-                    assigned_scores[:, :, -2] = torch.where(unknown_mask,
-                                                            anchor_scores,
-                                                            assigned_scores[:, :, -2]) # unknown embedding score
+            unknown_mask, anchor_scores = self._pseudo_unknown_mask(
+                flatten_cls_preds, flatten_pred_bboxes, gt_bboxes,
+                fg_mask_pre_prior)
+            assigned_scores[:, :, -2] = torch.where(
+                unknown_mask, anchor_scores,
+                assigned_scores[:, :, -2])  # unknown embedding score
 
         assigned_scores_sum = assigned_scores.sum().clamp(min=1)
-        loss_cls = self.loss_cls(flatten_cls_preds, assigned_scores).sum()
-        loss_cls /= assigned_scores_sum
+        loss_cls = self._loss_cls_with_fed_bce(
+            flatten_cls_preds, assigned_scores,
+            assigned_result['assigned_labels'], fg_mask_pre_prior,
+            assigned_scores_sum)
 
         # rescale bbox
         assigned_bboxes /= self.stride_tensor
@@ -957,6 +1071,7 @@ class YOLOv10Head(BaseDenseHead):
         ]
 
         flatten_cls_scores = torch.cat(flatten_cls_scores, dim=1).sigmoid()
+        score_diagnostics = flatten_cls_scores.clone()
         flatten_bbox_preds = torch.cat(flatten_bbox_preds, dim=1)
         flatten_decoded_bboxes = self.bbox_coder.decode(
             flatten_priors[None], flatten_bbox_preds, flatten_stride)
@@ -973,11 +1088,13 @@ class YOLOv10Head(BaseDenseHead):
         results_list = []
         
         if self.anchor_label:
+            flatten_cls_scores = flatten_cls_scores.clone()
             flatten_cls_scores[:, :, -1] = 0 # IMPORTANT: ignore all anchor predictions
 
-        for (bboxes, scores, objectness,
+        for (bboxes, scores, diag_scores, objectness,
              img_meta) in zip(flatten_decoded_bboxes, flatten_cls_scores,
-                              flatten_objectness, batch_img_metas):
+                              score_diagnostics, flatten_objectness,
+                              batch_img_metas):
             ori_shape = img_meta['ori_shape']
             scale_factor = img_meta['scale_factor']
             if 'pad_param' in img_meta:
@@ -992,19 +1109,35 @@ class YOLOv10Head(BaseDenseHead):
                 conf_inds = objectness > score_thr
                 bboxes = bboxes[conf_inds, :]
                 scores = scores[conf_inds, :]
+                diag_scores = diag_scores[conf_inds, :]
                 objectness = objectness[conf_inds]
 
             if objectness is not None:
                 # conf = obj_conf * cls_conf
                 scores *= objectness[:, None]
+                diag_scores *= objectness[:, None]
 
             if scores.shape[0] == 0:
                 empty_results = InstanceData()
                 empty_results.bboxes = bboxes
                 empty_results.scores = scores[:, 0]
                 empty_results.labels = scores[:, 0].int()
+                empty_results.max_known_scores = scores[:, 0]
+                empty_results.tunk_scores = scores[:, 0]
+                empty_results.tobj_scores = scores[:, 0]
                 results_list.append(empty_results)
                 continue
+
+            if self.anchor_label:
+                known_end = max(self.num_classes - 2, 1)
+                tunk_idx = self.num_classes - 2
+                tobj_scores = diag_scores[:, -1]
+            else:
+                known_end = max(self.num_classes - 1, 1)
+                tunk_idx = self.num_classes - 1
+                tobj_scores = diag_scores.new_zeros(diag_scores.shape[0])
+            max_known_scores = diag_scores[:, :known_end].max(dim=1).values
+            tunk_scores = diag_scores[:, tunk_idx]
 
             nms_pre = cfg.get('nms_pre', 100000)
             if cfg.multi_label is False:
@@ -1020,7 +1153,12 @@ class YOLOv10Head(BaseDenseHead):
                     scores, score_thr, nms_pre)
 
             results = InstanceData(
-                scores=scores, labels=labels, bboxes=bboxes[keep_idxs])
+                scores=scores,
+                labels=labels,
+                bboxes=bboxes[keep_idxs],
+                max_known_scores=max_known_scores[keep_idxs],
+                tunk_scores=tunk_scores[keep_idxs],
+                tobj_scores=tobj_scores[keep_idxs])
 
             if rescale:
                 if pad_param is not None:

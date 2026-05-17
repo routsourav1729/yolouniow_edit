@@ -39,6 +39,7 @@ class OpenWorldMetric(BaseMetric):
                  dataset_name: str,
                  owod_cfg: ConfigType = None,
                  threshold: float = 0.0,
+                 unknown_threshold: float = 0.0,
                  save_rets: bool = False,
                  collect_device: str = 'cpu',
                  prefix: Optional[str] = None):
@@ -53,6 +54,7 @@ class OpenWorldMetric(BaseMetric):
 
         self._is_2007 = False
         self.threshold = threshold
+        self.unknown_threshold = unknown_threshold
         self.save_rets = save_rets
         self._logger = MMLogger.get_current_instance()
         
@@ -61,8 +63,115 @@ class OpenWorldMetric(BaseMetric):
         self.total_num_class = owod_cfg.num_classes
         self.unknown_class_index = self.total_num_class - 1
         self.num_seen_classes = self.prev_intro_cls + self.cur_intro_cls
-        self.known_classes = list(VOC_COCO_CLASS_NAMES[dataset_name][:self.num_seen_classes])
+        self.dataset_name = dataset_name
+        self.task_num = owod_cfg.task_num
+        self.all_dataset_classes = list(VOC_COCO_CLASS_NAMES[dataset_name])
+        self.known_classes = list(self.all_dataset_classes[:self.num_seen_classes])
+        self.open_set_unknown_classes = list(
+            self.all_dataset_classes[self.num_seen_classes:-1])
         self._class_names = self.known_classes + UNK_CLASS
+        self._class_text_path = os.path.join(
+            data_root, "ImageSets", dataset_name,
+            f"t{self.task_num}_known.txt")
+        self._logged_class_lists = False
+
+    @staticmethod
+    def _pred_field_to_numpy(pred, name):
+        """Read extra prediction fields from InstanceData or dict-like results."""
+        value = None
+        if hasattr(pred, name):
+            value = getattr(pred, name)
+        else:
+            try:
+                if name in pred:
+                    value = pred[name]
+            except TypeError:
+                value = None
+
+        if value is None:
+            return None
+        if hasattr(value, 'detach'):
+            value = value.detach()
+        if hasattr(value, 'cpu'):
+            value = value.cpu()
+        if hasattr(value, 'numpy'):
+            return value.numpy()
+        return np.asarray(value)
+
+    @staticmethod
+    def _image_key(image_id):
+        """Match existing numeric image-id handling, with a string fallback."""
+        try:
+            return int(image_id)
+        except (TypeError, ValueError):
+            return str(image_id)
+
+    def _read_clip_prompt_names(self):
+        if not os.path.exists(self._class_text_path):
+            return []
+        with open(self._class_text_path, 'r') as f:
+            return [line.strip() for line in f if line.strip()]
+
+    def _log_class_lists_once(self):
+        if self._logged_class_lists:
+            return
+        self._logged_class_lists = True
+
+        clip_prompts = self._read_clip_prompt_names()
+        if not clip_prompts:
+            clip_prompts = list(self.known_classes)
+
+        lines = [
+            '\n' + '=' * 80,
+            f'OWOD class lists for {self.dataset_name} task {self.task_num}',
+            '=' * 80,
+            'Annotation/eval classes:',
+            f'  base  [0:{self.prev_intro_cls}]:',
+        ]
+        for idx, name in enumerate(self.known_classes[:self.prev_intro_cls]):
+            lines.append(f'    [{idx:02d}] {name}')
+
+        lines.append(
+            f'  novel [{self.prev_intro_cls}:{self.num_seen_classes}]:')
+        for idx, name in enumerate(
+                self.known_classes[self.prev_intro_cls:self.num_seen_classes],
+                start=self.prev_intro_cls):
+            lines.append(f'    [{idx:02d}] {name}')
+
+        lines.append('  open-set unknown GT classes mapped to T_unk at eval:')
+        if self.open_set_unknown_classes:
+            for name in self.open_set_unknown_classes:
+                lines.append(f'    {name}')
+        else:
+            lines.append('    <none listed in dataset constants>')
+
+        lines.extend([
+            '',
+            'CLIP/prompt rows used for known classes plus T_unk:',
+            f'  class_text_path: {self._class_text_path}',
+        ])
+        if len(clip_prompts) != self.num_seen_classes:
+            lines.append(
+                f'  warning: prompt rows={len(clip_prompts)} but seen '
+                f'eval classes={self.num_seen_classes}')
+        for idx, prompt in enumerate(clip_prompts):
+            role = 'base' if idx < self.prev_intro_cls else 'novel'
+            ann_name = (self.known_classes[idx]
+                        if idx < len(self.known_classes) else '<no eval class>')
+            if prompt == ann_name:
+                lines.append(f'    [{idx:02d}] {role:5s} {prompt}')
+            else:
+                lines.append(
+                    f"    [{idx:02d}] {role:5s} prompt='{prompt}' "
+                    f"eval='{ann_name}'")
+        lines.append(
+            f"    [{self.unknown_class_index:02d}] T_unk prompt='object' "
+            "eval='unknown'")
+        lines.append(
+            '  T_anchor is the extra embedding row after T_unk; it is not a '
+            'reported detection class.')
+        lines.append('=' * 80)
+        self._logger.info('\n'.join(lines))
 
     def process(self, data_batch: dict, data_samples):
         """Process one batch of data samples and predictions. The processed
@@ -79,16 +188,33 @@ class OpenWorldMetric(BaseMetric):
             pred_bboxes = pred['bboxes'].cpu().numpy()
             pred_scores = pred['scores'].cpu().numpy()
             pred_labels = pred['labels'].cpu().numpy()
+            pred_max_known = self._pred_field_to_numpy(pred,
+                                                       'max_known_scores')
+            pred_tunk = self._pred_field_to_numpy(pred, 'tunk_scores')
+            pred_tobj = self._pred_field_to_numpy(pred, 'tobj_scores')
 
             det = []
-            for box, score, label in zip(pred_bboxes, pred_scores, pred_labels):
+            for idx, (box, score,
+                      label) in enumerate(zip(pred_bboxes, pred_scores,
+                                              pred_labels)):
                 if label == -100:
                     continue
-                if score > self.threshold or label == self.unknown_class_index:
+                is_unknown = label == self.unknown_class_index
+                if (is_unknown and score > self.unknown_threshold) or (
+                        not is_unknown and score > self.threshold):
                     xmin, ymin, xmax, ymax = box
                     xmin += 1
                     ymin += 1
-                    det.append([label, data_sample['img_id'], score, xmin, ymin, xmax, ymax])
+                    max_known = (pred_max_known[idx] if pred_max_known is not
+                                 None and idx < len(pred_max_known) else np.nan)
+                    tunk = (pred_tunk[idx] if pred_tunk is not None
+                            and idx < len(pred_tunk) else np.nan)
+                    tobj = (pred_tobj[idx] if pred_tobj is not None
+                            and idx < len(pred_tobj) else np.nan)
+                    det.append([
+                        label, data_sample['img_id'], score, xmin, ymin, xmax,
+                        ymax, max_known, tunk, tobj
+                    ])
             self.results.append(det)
 
     def compute_avg_precision_at_many_recall_level_for_unk(self, precisions, recalls):
@@ -149,13 +275,14 @@ class OpenWorldMetric(BaseMetric):
             dict: The computed metrics. The keys are the names of the metrics,
             and the values are corresponding results.
         """
+        self._log_class_lists_once()
         
         # get predictions by class
         predictions = defaultdict(list)
         unk_raw_dets = []  # raw unknown detections for classwise recall
         for dets in results:
             for det in dets:
-                cls, image_id, score, xmin, ymin, xmax, ymax  = det
+                cls, image_id, score, xmin, ymin, xmax, ymax  = det[:7]
                 xmin += 1
                 ymin += 1
                 predictions[cls].append(
@@ -249,6 +376,11 @@ class OpenWorldMetric(BaseMetric):
         aose_lines.append(f"  {'TOTAL':30s}: {int(total_num_unk_det_as_known[50]):5d}")
         aose_lines.append('=' * 60)
         self._logger.info('\n'.join(aose_lines))
+        self._log_aose_unknown_confusion(
+            results,
+            ovthresh=0.5,
+            expected_total=int(total_num_unk_det_as_known[50]))
+        self._log_aose_score_diagnostics(results, ovthresh=0.5)
 
         # Extra logging of class-wise APs
         # self._logger.info(self._class_names)
@@ -288,6 +420,221 @@ class OpenWorldMetric(BaseMetric):
         self._log_classwise_unknown_recall(unk_raw_dets)
 
         return ret
+
+    def _log_aose_unknown_confusion(self, results, ovthresh=0.5,
+                                    expected_total=None):
+        """Log which original unknown classes are absorbed by known classes.
+
+        This mirrors the existing A-OSE counting rule: every known-class
+        detection whose box overlaps an unknown GT by more than ``ovthresh`` is
+        counted, and the matched GT's original annotation name is preserved.
+        """
+        with open(self._image_set_path) as f:
+            imagenames = [x.strip() for x in f.readlines()]
+
+        known_tuple = tuple(self.known_classes)
+        mapping = {}
+        per_image_unknown = {}
+        for imagename in imagenames:
+            key = self._image_key(imagename)
+            if key in mapping:
+                continue
+            mapping[key] = imagename
+            recs = parse_rec(self._anno_file_template.format(imagename),
+                             known_tuple)
+            unk_objs = [o for o in recs if o['name'] == 'unknown']
+            if unk_objs:
+                per_image_unknown[imagename] = {
+                    'bbox': np.array([o['bbox'] for o in unk_objs],
+                                     dtype=np.float64),
+                    'orig': [o['original_name'] for o in unk_objs],
+                }
+
+        by_pred = defaultdict(lambda: defaultdict(int))
+        by_orig = defaultdict(lambda: defaultdict(int))
+
+        for dets in results:
+            for det in dets:
+                cls, image_id, score, xmin, ymin, xmax, ymax = det[:7]
+                cls = int(cls)
+                if cls >= self.num_seen_classes:
+                    continue
+
+                img_name = mapping.get(self._image_key(image_id))
+                if img_name not in per_image_unknown:
+                    continue
+                R = per_image_unknown[img_name]
+                BBGT = R['bbox']
+                if BBGT.size == 0:
+                    continue
+
+                bb = np.array([xmin + 1, ymin + 1, xmax, ymax],
+                              dtype=np.float64)
+                ixmin = np.maximum(BBGT[:, 0], bb[0])
+                iymin = np.maximum(BBGT[:, 1], bb[1])
+                ixmax = np.minimum(BBGT[:, 2], bb[2])
+                iymax = np.minimum(BBGT[:, 3], bb[3])
+                iw = np.maximum(ixmax - ixmin + 1.0, 0.0)
+                ih = np.maximum(iymax - iymin + 1.0, 0.0)
+                inters = iw * ih
+                uni = ((bb[2] - bb[0] + 1.0) *
+                       (bb[3] - bb[1] + 1.0) +
+                       (BBGT[:, 2] - BBGT[:, 0] + 1.0) *
+                       (BBGT[:, 3] - BBGT[:, 1] + 1.0) - inters)
+                overlaps = inters / np.maximum(uni, np.finfo(np.float64).eps)
+                jmax = int(np.argmax(overlaps))
+                if overlaps[jmax] <= ovthresh:
+                    continue
+
+                orig_cls = R['orig'][jmax]
+                by_pred[cls][orig_cls] += 1
+                by_orig[orig_cls][cls] += 1
+
+        total = sum(sum(counts.values()) for counts in by_pred.values())
+        if total == 0:
+            self._logger.info(
+                f'A-OSE unknown-class breakdown @ IoU>{ovthresh:.2f}: '
+                'no known detections overlapped unknown GT.')
+            return
+
+        def _fmt_counts(counts):
+            return ', '.join(
+                f'{name}={count}' for name, count in sorted(
+                    counts.items(), key=lambda item: (-item[1], item[0])))
+
+        ordered_orig = list(self.open_set_unknown_classes)
+        for orig in sorted(by_orig.keys()):
+            if orig not in ordered_orig:
+                ordered_orig.append(orig)
+
+        lines = [
+            '\n' + '=' * 80,
+            f'A-OSE true-unknown breakdown @ IoU>{ovthresh:.2f}',
+            '=' * 80,
+            '  counting rule: known detections overlapping unknown GT, same as A-OSE',
+            f'  cross-tab total: {total}',
+        ]
+        if expected_total is not None:
+            lines.append(f'  evaluator A-OSE total: {expected_total}')
+            if int(expected_total) != int(total):
+                lines.append(
+                    '  note: totals differ; cross-tab uses direct in-memory '
+                    'matching for diagnostics.')
+
+        lines.append('  by predicted known class -> true unknown class:')
+        for cls, counts in sorted(
+                by_pred.items(), key=lambda item: -sum(item[1].values())):
+            pred_name = self.known_classes[cls]
+            lines.append(
+                f'    {pred_name:36s}: {sum(counts.values()):5d}  '
+                f'{_fmt_counts(counts)}')
+
+        lines.append('  by true unknown class -> predicted known class:')
+        for orig in ordered_orig:
+            counts = by_orig.get(orig, {})
+            if counts:
+                named_counts = {
+                    self.known_classes[cls]: count
+                    for cls, count in counts.items()
+                }
+                lines.append(
+                    f'    {orig:36s}: {sum(counts.values()):5d}  '
+                    f'{_fmt_counts(named_counts)}')
+            else:
+                lines.append(f'    {orig:36s}:     0')
+        lines.append('=' * 80)
+        self._logger.info('\n'.join(lines))
+
+    def _log_aose_score_diagnostics(self, results, ovthresh=0.5):
+        rows = []
+        per_class = defaultdict(list)
+
+        for dets in results:
+            for det in dets:
+                if len(det) < 10:
+                    continue
+                cls, image_id, score, xmin, ymin, xmax, ymax = det[:7]
+                cls = int(cls)
+                if cls >= self.num_seen_classes:
+                    continue
+
+                rec = parse_rec(self._anno_file_template.format(image_id),
+                                tuple(self.known_classes))
+                unk_boxes = np.array([
+                    obj['bbox'] for obj in rec if obj['name'] == 'unknown'
+                ])
+                if unk_boxes.size == 0:
+                    continue
+
+                bb = np.array([xmin + 1, ymin + 1, xmax, ymax],
+                              dtype=np.float64)
+                ixmin = np.maximum(unk_boxes[:, 0], bb[0])
+                iymin = np.maximum(unk_boxes[:, 1], bb[1])
+                ixmax = np.minimum(unk_boxes[:, 2], bb[2])
+                iymax = np.minimum(unk_boxes[:, 3], bb[3])
+                iw = np.maximum(ixmax - ixmin + 1.0, 0.0)
+                ih = np.maximum(iymax - iymin + 1.0, 0.0)
+                inters = iw * ih
+                uni = ((bb[2] - bb[0] + 1.0) *
+                       (bb[3] - bb[1] + 1.0) +
+                       (unk_boxes[:, 2] - unk_boxes[:, 0] + 1.0) *
+                       (unk_boxes[:, 3] - unk_boxes[:, 1] + 1.0) - inters)
+                overlaps = inters / np.maximum(uni, np.finfo(np.float64).eps)
+                if overlaps.max() <= ovthresh:
+                    continue
+
+                diag = {
+                    'pred_score': float(score),
+                    'max_known': float(det[7]),
+                    'tunk': float(det[8]),
+                    'tobj': float(det[9]),
+                    'pred_cls': cls,
+                }
+                rows.append(diag)
+                per_class[cls].append(diag)
+
+        if not rows:
+            self._logger.info(
+                'AOSE score diagnostics: no known detections overlapped '
+                'unknown GT at the requested IoU.')
+            return
+
+        def _stats(values):
+            arr = np.asarray(values, dtype=np.float64)
+            arr = arr[np.isfinite(arr)]
+            if arr.size == 0:
+                return 'n/a'
+            return (f'mean={arr.mean():.4f}, p50={np.percentile(arr, 50):.4f}, '
+                    f'p90={np.percentile(arr, 90):.4f}, max={arr.max():.4f}')
+
+        def _mean(values):
+            arr = np.asarray(values, dtype=np.float64)
+            arr = arr[np.isfinite(arr)]
+            if arr.size == 0:
+                return 'n/a'
+            return f'{arr.mean():.4f}'
+
+        lines = [
+            '\n' + '=' * 60,
+            f'AOSE score diagnostics @ IoU>{ovthresh:.2f}',
+            '=' * 60,
+            '  rows: known-class predictions overlapping unknown GT',
+            f'  count                         : {len(rows)}',
+            f"  predicted known score         : {_stats([r['pred_score'] for r in rows])}",
+            f"  max known score               : {_stats([r['max_known'] for r in rows])}",
+            f"  T_unk score                   : {_stats([r['tunk'] for r in rows])}",
+            f"  Tobj score                    : {_stats([r['tobj'] for r in rows])}",
+            '  by predicted known class:',
+        ]
+        for cls, cls_rows in sorted(
+                per_class.items(), key=lambda item: len(item[1]), reverse=True):
+            lines.append(
+                f"    {self.known_classes[cls]:28s}: n={len(cls_rows):5d}, "
+                f"known_mean={_mean([r['max_known'] for r in cls_rows])}, "
+                f"tunk_mean={_mean([r['tunk'] for r in cls_rows])}, "
+                f"tobj_mean={_mean([r['tobj'] for r in cls_rows])}")
+        lines.append('=' * 60)
+        self._logger.info('\n'.join(lines))
 
     def _log_classwise_unknown_recall(self, unk_dets):
         """Compute and log per-original-class recall for unknown objects.
@@ -655,4 +1002,3 @@ def print_total_annatations(imagenames, known_classes, recs):
                 category, count = known_classes_un[i+j], total_ann[i+j]
                 line += f"{category.ljust(15)} | {str(count).rjust(5)} | "
         print(line)
-
